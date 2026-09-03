@@ -1,0 +1,6 @@
+{
+  "name": "Abiedien Backoffice",
+  "description": "Enterprise backoffice management system with user controls, analytics, audit logs, and system configuration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
