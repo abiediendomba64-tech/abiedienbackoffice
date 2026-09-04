@@ -7,9 +7,10 @@ interface HeaderProps {
   searchTerm: string;
   onSearchChange: (val: string) => void;
   onOpenAIAssistant: () => void;
+  onOpenNotifications: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ currentTab, searchTerm, onSearchChange, onOpenAIAssistant }) => {
+export const Header: React.FC<HeaderProps> = ({ currentTab, searchTerm, onSearchChange, onOpenAIAssistant, onOpenNotifications }) => {
   const tabTitles: Record<NavTab, { title: string; subtitle: string }> = {
     dashboard: { title: 'Executive Dashboard', subtitle: 'Overview of system operations, metrics, and real-time activity.' },
     users: { title: 'User & Role Management', subtitle: 'Manage organization accounts, permissions, and security status.' },
@@ -42,17 +43,17 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, searchTerm, onSearch
         {/* AI Assistant Quick Trigger */}
         <button
           onClick={onOpenAIAssistant}
-          className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3.5 py-1.5 rounded-xl font-medium text-xs shadow-sm shadow-blue-500/20 transition-all active:scale-95"
+          className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3.5 py-1.5 rounded-xl font-medium text-xs shadow-sm shadow-blue-500/20 transition-all active:scale-95 cursor-pointer"
         >
           <Sparkles className="w-3.5 h-3.5 animate-pulse text-blue-200" />
           <span>Ask AI Assistant</span>
         </button>
 
-        {/* Notifications */}
+        {/* Notifications / Telegram Delivery Status */}
         <button
-          onClick={() => alert('No unread system alerts.')}
-          className="relative p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors"
-          title="Notifications"
+          onClick={onOpenNotifications}
+          className="relative p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+          title="Telegram Bot Notifications & Delivery Status"
         >
           <Bell className="w-4 h-4" />
           <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-blue-600"></span>
