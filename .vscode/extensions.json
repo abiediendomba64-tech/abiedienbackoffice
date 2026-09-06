@@ -1,0 +1,13 @@
+{
+  "recommendations": [
+    "eamodio.gitlens",
+    "github.vscode-github-actions",
+    "anzacloud.flare-cloudflare-pages",
+    "ivanarjona.cloudflaretunnel",
+    "bradlc.vscode-tailwindcss",
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+    "christian-kohler.npm-intellisense",
+    "humao.rest-client"
+  ]
+}
