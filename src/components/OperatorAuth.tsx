@@ -1,17 +1,59 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { verifyDashboardAccess } from '../lib/api';
-import { ShieldCheck, Lock, Mail, ArrowRight, AlertCircle, Cpu } from 'lucide-react';
+import { verifyDashboardAccess, loginWithTelegram, TelegramAuthPayload } from '../lib/api';
+import { ShieldCheck, Lock, Mail, ArrowRight, AlertCircle, Cpu, Send } from 'lucide-react';
 
 interface OperatorAuthProps {
   onLoginSuccess: (user: any) => void;
 }
 
+declare global {
+  interface Window {
+    onTelegramAuth: (user: TelegramAuthPayload) => void;
+  }
+}
+
 export const OperatorAuth: React.FC<OperatorAuthProps> = ({ onLoginSuccess }) => {
   const [email, setEmail] = useState('abiediendomba64@gmail.com');
-  const [password, setPassword] = useState('••••••••••••');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [telegramLoading, setTelegramLoading] = useState(false);
+  const telegramWidgetRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Expose global callback for Telegram Widget
+    window.onTelegramAuth = async (telegramUser: TelegramAuthPayload) => {
+      setTelegramLoading(true);
+      setError('');
+      try {
+        const { magic_link } = await loginWithTelegram(telegramUser);
+        // Navigate user to magic link to create Supabase session
+        window.location.href = magic_link;
+      } catch (err: any) {
+        setError(err.message || 'Telegram login failed. Pastikan Telegram ID Anda sudah terdaftar.');
+        setTelegramLoading(false);
+      }
+    };
+
+    // Dynamically inject the Telegram Login Widget script
+    if (telegramWidgetRef.current && isSupabaseConfigured) {
+      const script = document.createElement('script');
+      script.src = 'https://telegram.org/js/telegram-widget.js?22';
+      script.setAttribute('data-telegram-login', 'sandekalabot');
+      script.setAttribute('data-size', 'large');
+      script.setAttribute('data-radius', '12');
+      script.setAttribute('data-onauth', 'onTelegramAuth(user)');
+      script.setAttribute('data-request-access', 'write');
+      script.async = true;
+      telegramWidgetRef.current.appendChild(script);
+    }
+
+    return () => {
+      // Cleanup global handler
+      delete (window as any).onTelegramAuth;
+    };
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,7 +72,6 @@ export const OperatorAuth: React.FC<OperatorAuthProps> = ({ onLoginSuccess }) =>
           return;
         }
         if (data.user) {
-          // Strict server-side / database capability check for dashboard_access
           const hasAccess = await verifyDashboardAccess(data.user.id);
           if (!hasAccess) {
             setError('Access Denied: Strict server validation indicates account lacks `dashboard_access` capability.');
@@ -99,6 +140,29 @@ export const OperatorAuth: React.FC<OperatorAuthProps> = ({ onLoginSuccess }) =>
           </div>
         )}
 
+        {/* Telegram Login */}
+        {isSupabaseConfigured && (
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-slate-300 text-center">Login via Telegram Bot</p>
+            <div className="flex flex-col items-center gap-2">
+              {telegramLoading ? (
+                <div className="flex items-center gap-2 text-sky-400 text-sm py-2">
+                  <Send className="w-4 h-4 animate-pulse" />
+                  <span>Memverifikasi Telegram...</span>
+                </div>
+              ) : (
+                <div ref={telegramWidgetRef} />
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center gap-3">
+          <div className="flex-1 h-px bg-slate-700" />
+          <span className="text-xs text-slate-500 font-mono">atau gunakan email</span>
+          <div className="flex-1 h-px bg-slate-700" />
+        </div>
+
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1">Operator Email</label>
@@ -157,3 +221,4 @@ export const OperatorAuth: React.FC<OperatorAuthProps> = ({ onLoginSuccess }) =>
     </div>
   );
 };
+
