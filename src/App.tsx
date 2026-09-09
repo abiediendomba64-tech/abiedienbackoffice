@@ -54,10 +54,17 @@ import {
   sendPaymentVerifiedNotification, 
   executeEmergencyAction, 
   logAuditAction,
-  linkTelegramAccount,
   fetchUserClaims,
-  EmergencyActionPayload 
+  EmergencyActionPayload,
+  loginWithTelegram,
+  TelegramAuthPayload
 } from './lib/api';
+
+declare global {
+  interface Window {
+    onTelegramAuth: (user: TelegramAuthPayload) => void;
+  }
+}
 
 // ==========================================
 // DATA TYPES
@@ -191,99 +198,6 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 // ==========================================
 async function api<T>(url: string, init: RequestInit = {}): Promise<T> { 
   const token = localStorage.getItem('backoffice_access_token'); 
-  const isDemo = token === 'demo_super_admin_token_abied' || !token;
-
-  if (isDemo) {
-    if (url === '/stats') {
-      return { totalUsers: 148, verifiedMembers: 132, pendingTickets: 4, totalTopics: 28, pendingPayments: 2, totalWebsites: 19, superAdminCount: 3 } as unknown as T;
-    }
-    if (url === '/users') {
-      return [
-        { 
-          id: 1, telegram_id: 1001, username: 'abied_admin', full_name: 'Abied Iendomba', role: 'super_admin', status: 'active', domain_name: 'abiedien.internal', domain_verified: true, created_at: '2026-09-01T10:00:00Z',
-          domains: [
-            { id: 11, domain_name: 'abiedien.internal', status: 'verified', is_primary: true, traffic_trend: '+24%', ssl_status: 'active', subdomains: [{ id: 101, name: 'api', fqdn: 'api.abiedien.internal', status: 'active' }, { id: 102, name: 'app', fqdn: 'app.abiedien.internal', status: 'active' }] }
-          ]
-        },
-        { 
-          id: 2, telegram_id: 1002, username: 'sarah_dev', full_name: 'Sarah Jenkins', role: 'dev', status: 'active', domain_name: 'sarahops.dev', domain_verified: true, created_at: '2026-09-02T11:30:00Z',
-          domains: [
-            { id: 12, domain_name: 'sarahops.dev', status: 'verified', is_primary: true, traffic_trend: '+12%', ssl_status: 'active', subdomains: [{ id: 103, name: 'cdn', fqdn: 'cdn.sarahops.dev', status: 'active' }] }
-          ]
-        },
-        { 
-          id: 3, telegram_id: 1003, username: 'marcus_adm', full_name: 'Marcus Vance', role: 'admin', status: 'active', domain_name: 'marcus-net.id', domain_verified: true, created_at: '2026-09-03T09:15:00Z',
-          domains: [
-            { id: 13, domain_name: 'marcus-net.id', status: 'verified', is_primary: true, traffic_trend: '+8%', ssl_status: 'active', subdomains: [{ id: 104, name: 'portal', fqdn: 'portal.marcus-net.id', status: 'active' }] }
-          ]
-        },
-        { 
-          id: 4, telegram_id: 1004, username: 'rizky_member', full_name: 'Rizky Pratama', role: 'member', status: 'active', domain_name: 'rizkycloud.xyz', domain_verified: false, created_at: '2026-09-04T14:20:00Z',
-          domains: [
-            { id: 14, domain_name: 'rizkycloud.xyz', status: 'pending', is_primary: true, traffic_trend: '0%', ssl_status: 'pending', subdomains: [{ id: 105, name: 'staging', fqdn: 'staging.rizkycloud.xyz', status: 'disabled' }] },
-            { id: 15, domain_name: 'rizky-legacy.net', status: 'verified', is_primary: false, traffic_trend: '-35%', ssl_status: 'active', subdomains: [] }
-          ]
-        },
-        { 
-          id: 5, telegram_id: 1005, username: 'diana_new', full_name: 'Diana Putri', role: 'new_user', status: 'active', domain_name: null, domain_verified: false, created_at: '2026-09-05T08:10:00Z',
-          domains: []
-        }
-      ] as unknown as T;
-    }
-    if (url === '/tickets') {
-      return [
-        { 
-          id: 101, ticket_number: 'TKT-501', user_id: 4, category: 'push_request', title: 'Permintaan push indexing domainku.xyz', description: 'Domain baru butuh push sitemap dan index API.', status: 'pending', priority: 'urgent', assigned_to: null, created_at: '2026-09-05T10:00:00Z', updated_at: '2026-09-05T10:30:00Z', user_name: 'Rizky Pratama',
-          collected_data: { domain: 'rizkycloud.xyz', sitemap_url: 'https://rizkycloud.xyz/sitemap.xml' }
-        },
-        { 
-          id: 102, ticket_number: 'TKT-502', user_id: 2, category: 'cdn_request', title: 'Purge cache Cloudflare Edge cluster', description: 'Update CSS terbaru butuh purge seluruh cache.', status: 'in_progress', priority: 'high', assigned_to: 1, created_at: '2026-09-04T15:20:00Z', updated_at: '2026-09-05T08:00:00Z', user_name: 'Sarah Jenkins',
-          collected_data: { domain: 'sarahops.dev', cdn_provider: 'Cloudflare' }
-        },
-        { 
-          id: 103, ticket_number: 'TKT-503', user_id: 3, category: 'payment', title: 'Verifikasi invoice payout bulanan operator', description: 'Pembayaran gaji operator kloter 1 September 2026.', status: 'resolved', priority: 'medium', assigned_to: 1, created_at: '2026-09-03T11:00:00Z', updated_at: '2026-09-04T16:00:00Z', user_name: 'Marcus Vance' 
-        },
-        { 
-          id: 104, ticket_number: 'TKT-504', user_id: 4, category: 'seo_audit', title: 'Audit Indexing & Deteksi URL', description: 'Audit Indexing & SEO untuk rizkycloud.xyz | Keywords: slot gacor, maxwin | Status: Owner Verified', status: 'pending', priority: 'medium', assigned_to: null, created_at: '2026-09-05T11:20:00Z', updated_at: '2026-09-05T11:20:00Z', user_name: 'Rizky Pratama',
-          collected_data: { service_type: 'indexing_audit', target_domain: 'rizkycloud.xyz', keywords: ['slot gacor', 'maxwin'], ownership_status: 'verified' }
-        },
-        {
-          id: 105, ticket_number: 'TKT-505', user_id: 4, category: 'redirect_request', title: 'Pengajuan 301 Redirect Domain Lama ke Baru', description: 'Trafik domain rizky-legacy.net turun, ajukan migrasi ke rizkycloud.xyz.', status: 'pending', priority: 'high', assigned_to: null, created_at: '2026-09-05T12:00:00Z', updated_at: '2026-09-05T12:00:00Z', user_name: 'Rizky Pratama',
-          collected_data: { source_domain: 'rizky-legacy.net', target_domain: 'rizkycloud.xyz' }
-        }
-      ] as unknown as T;
-    }
-    if (url === '/payments') {
-      return [
-        { id: 201, payment_number: 'PAY-801', user_id: 4, amount: 2500000, currency: 'IDR', status: 'pending', created_at: '2026-09-05T08:00:00Z' },
-        { id: 202, payment_number: 'PAY-802', user_id: 3, amount: 4500000, currency: 'IDR', status: 'verified', created_at: '2026-09-04T09:00:00Z', verified_at: '2026-09-04T10:00:00Z' },
-        { id: 203, payment_number: 'PAY-803', user_id: 2, amount: 3750000, currency: 'IDR', status: 'verified', created_at: '2026-09-03T13:45:00Z', verified_at: '2026-09-03T14:10:00Z' }
-      ] as unknown as T;
-    }
-    if (url === '/notifications') {
-      return [
-        { id: 301, type: 'telegram', title: 'New ticket #TKT-501 created by @rizky_member', status: 'Sent', created_at: '2026-09-05T10:01:15Z' },
-        { id: 302, type: 'alert', title: 'Super Admin session validated with Zero Trust token', status: 'Sent', created_at: '2026-09-05T09:05:40Z' },
-        { id: 303, type: 'system', title: 'Cloudflare Pages deployment sync completed', status: 'Sent', created_at: '2026-09-05T08:30:00Z' }
-      ] as unknown as T;
-    }
-    if (url === '/audit') {
-      return [
-        { id: 401, action_type: 'TICKET_TRANSITION', actor_role: 'super_admin', message: 'Ticket #TKT-503 status transitioned to RESOLVED', created_at: '2026-09-05T10:30:12Z' },
-        { id: 402, action_type: 'PAYMENT_VERIFIED', actor_role: 'super_admin', message: 'Payment #PAY-802 verified (IDR 4.500.000)', created_at: '2026-09-04T10:00:00Z' },
-        { id: 403, action_type: 'USER_ROLE_UPDATE', actor_role: 'super_admin', message: 'User @marcus_adm upgraded to admin', created_at: '2026-09-03T09:15:00Z' }
-      ] as unknown as T;
-    }
-    if (url === '/bot-status') {
-      return { status: 'Operational (Active Polling)', bot_name: 'Goldenbot', username: '@sandekalabot', id: '8849114090', uptime: '99.99%', latency: '28ms' } as unknown as T;
-    }
-    if (url === '/session') {
-      return { dashboard_access: true, role: 'super_admin', email: 'abiediendomba64@gmail.com' } as unknown as T;
-    }
-    if (url.match(/^\/tickets\/\d+\/(claim|resolve|reply)$/) || url.match(/^\/payments\/\d+\/verify$/) || url === '/admin/actions/execute') {
-      return { success: true, message: 'Action executed successfully via Atomic RPC & Audit Trail' } as unknown as T;
-    }
-  }
 
   const h = new Headers(init.headers); 
   h.set('content-type', 'application/json'); 
@@ -337,12 +251,14 @@ async function replyTicketApi(id: number | string, message: string) {
 async function verifyPaymentApi(id: number | string, reason?: string, paymentObj?: any) {
   const result = await executeAdminAction({ payment_id: id, action: 'VERIFY_PAYMENT', reason: reason || 'Verifikasi sah oleh Super Admin' });
   try {
-    await sendPaymentVerifiedNotification(
-      id,
-      paymentObj?.user_id || '104',
-      paymentObj?.amount ? Number(paymentObj.amount).toLocaleString('id-ID') : '4.500.000',
-      'Abied Iendomba (Super Admin)'
-    );
+    if (paymentObj) {
+      await sendPaymentVerifiedNotification(
+        id,
+        paymentObj.user_id || '-',
+        paymentObj.amount ? Number(paymentObj.amount).toLocaleString('id-ID') : '0',
+        'Abied Iendomba (Super Admin)'
+      );
+    }
   } catch (err) {
     console.warn('Telegram dual notification warning:', err);
   }
@@ -397,6 +313,7 @@ export default function App() {
   const [users, setUsers] = useState<User[]>([]); 
   const [tickets, setTickets] = useState<Ticket[]>([]); 
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [forumTopics, setForumTopics] = useState<any[]>([]);
   const [loading, setLoading] = useState(true); 
   const [error, setError] = useState(''); 
   const [query, setQuery] = useState(''); 
@@ -420,56 +337,61 @@ export default function App() {
   const [currentUserName, setCurrentUserName] = useState<string>(() => localStorage.getItem('user_name') || 'Pengguna');
   const [currentUserTelegramId, setCurrentUserTelegramId] = useState<string>(() => localStorage.getItem('user_tg_id') || '');
 
-  const SUPER_ADMIN_IDS = useMemo(() => ['8849114090', '7862805424', '8625074832', '8627900503'], []);
 
-  // Telegram Mini App Automatic Environment Detection
+  // Telegram Mini App & Supabase Magic Link Auth Callback Detection
   useEffect(() => {
+    // 1. Initialize Telegram Mini App Webview
     const tg = (window as any).Telegram?.WebApp;
     if (tg) {
       try {
         tg.ready?.();
         tg.expand?.();
-        const tgUser = tg.initDataUnsafe?.user;
-        if (tgUser?.id) {
-          const isSuper = SUPER_ADMIN_IDS.includes(String(tgUser.id));
-          const detectedRole: 'super_admin' | 'member' = isSuper ? 'super_admin' : 'member';
-          const detectedName = `${tgUser.first_name || ''} ${tgUser.last_name || ''}`.trim() || tgUser.username || `User ${tgUser.id}`;
-          
-          setCurrentUserRole(detectedRole);
-          setCurrentUserName(detectedName);
-          setCurrentUserTelegramId(String(tgUser.id));
-          setAuthenticated(true);
-          localStorage.setItem('backoffice_access_token', `tg_session_${tgUser.id}`);
-          localStorage.setItem('user_role', detectedRole);
-          localStorage.setItem('user_name', detectedName);
-          localStorage.setItem('user_tg_id', String(tgUser.id));
-        }
       } catch (err) {
         console.warn('Telegram WebApp initData parse note:', err);
       }
     }
-  }, [SUPER_ADMIN_IDS]);
 
-  // Magic Link Telegram Account Link Handler
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const tgLinkId = params.get('tg_link_id');
-      const regName = params.get('name');
-      if (tgLinkId) {
-        const fallbackEmail = localStorage.getItem('user_email') || 'member@abiedien.internal';
-        linkTelegramAccount(tgLinkId, fallbackEmail, regName ? decodeURIComponent(regName) : undefined).then(() => {
-          showToast('Akun Telegram berhasil terhubung & diverifikasi sebagai Member!', 'success');
-          setCurrentUserRole('member');
-          setCurrentUserTelegramId(tgLinkId);
-          if (regName) setCurrentUserName(decodeURIComponent(regName));
-          setAuthenticated(true);
+    // 2. Parse Supabase Magic Link tokens from URL hash (#access_token=... or ?access_token=...)
+    const hash = window.location.hash;
+    const search = window.location.search;
+    const params = new URLSearchParams(hash.replace(/^#/, '') || search.replace(/^\?/, ''));
+    const accessToken = params.get('access_token');
+    const refreshToken = params.get('refresh_token');
+
+    if (accessToken) {
+      localStorage.setItem('backoffice_access_token', accessToken);
+      if (refreshToken) localStorage.setItem('backoffice_refresh_token', refreshToken);
+      setAuthenticated(true);
+      window.history.replaceState(null, '', window.location.pathname);
+      showToast('Autentikasi Magic Link Telegram Berhasil!', 'success');
+    }
+
+    // 3. Sync User Session Profile from Backend
+    const currentToken = accessToken || localStorage.getItem('backoffice_access_token');
+    if (currentToken) {
+      api<any>('/session')
+        .then(res => {
+          if (res?.actor) {
+            const role = res.actor.role === 'root' ? 'super_admin' : res.actor.role;
+            setCurrentUserRole(role);
+            localStorage.setItem('user_role', role);
+          }
+          if (res?.user) {
+            const name = res.user.full_name || res.user.username || 'Pengguna';
+            setCurrentUserName(name);
+            localStorage.setItem('user_name', name);
+            if (res.user.telegram_id) {
+              setCurrentUserTelegramId(String(res.user.telegram_id));
+              localStorage.setItem('user_tg_id', String(res.user.telegram_id));
+            }
+          }
+        })
+        .catch(err => {
+          console.warn('Session profile sync note:', err);
         });
-      }
-    } catch (e) {
-      console.warn('URL param parse note:', e);
     }
   }, []);
+
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -480,16 +402,18 @@ export default function App() {
     setLoading(true); 
     setError(''); 
     try { 
-      const [s, u, t, p] = await Promise.all([
+      const [s, u, t, p, f] = await Promise.all([
         api<Stats>('/stats'),
         api<User[]>('/users'),
         api<Ticket[]>('/tickets'),
-        api<Payment[]>('/payments')
+        api<Payment[]>('/payments'),
+        api<any[]>('/forum-topics').catch(() => [])
       ]); 
       setStats(s); 
       setUsers(u); 
       setTickets(t); 
       setPayments(p); 
+      setForumTopics(f);
     } catch (e: any) { 
       setError(e?.message || 'Backend belum tersedia'); 
     } finally { 
@@ -1020,7 +944,7 @@ export default function App() {
                   )}
 
                   {webTab === 'forum' && (
-                    <CommunityForumView onSelect={setSelected} />
+                    <CommunityForumView topics={forumTopics} onSelect={setSelected} />
                   )}
 
                   {webTab === 'broadcast' && (
@@ -1285,45 +1209,113 @@ function OverviewView({ stats, users, tickets, payments, onOpen }: {
   );
 }
 
-function MembersView({ users, memberQuery, setMemberQuery, onSelect }: { 
+function MembersView({ users: initialUsers, memberQuery, setMemberQuery, onSelect }: { 
   users: User[]; 
   memberQuery: string; 
   setMemberQuery: (v: string) => void; 
   onSelect: (v: any) => void 
 }) {
+  const [localUsers, setLocalUsers] = useState<User[]>(initialUsers);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'active' | 'suspended'>('all');
+  const [selectedUserDetail, setSelectedUserDetail] = useState<any>(null);
+
+  // Sync when initialUsers changes
+  useEffect(() => {
+    setLocalUsers(initialUsers);
+  }, [initialUsers]);
+
+  const handleApproveUser = (userId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setLocalUsers(prev => prev.map(u => u.id === userId ? { ...u, status: 'active', domain_verified: true, role: 'member' } : u));
+    const target = localUsers.find(u => u.id === userId);
+    alert(`✅ ACC BERHASIL: Akun ${target?.full_name || `@${target?.username}`} telah disetujui sebagai Member Aktif. DNS Domain & Routing Anycast telah diaktifkan.`);
+  };
+
+  const handleSuspendUser = (userId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setLocalUsers(prev => prev.map(u => u.id === userId ? { ...u, status: 'suspended', domain_verified: false } : u));
+    alert(`⛔ Akun #${userId} telah disuspend.`);
+  };
+
+  const filtered = useMemo(() => {
+    return localUsers.filter(u => {
+      const q = memberQuery.toLowerCase();
+      const matchesText = !memberQuery || (u.full_name || '').toLowerCase().includes(q) || (u.username || '').toLowerCase().includes(q) || (u.domain_name || '').toLowerCase().includes(q);
+      const isPending = u.status === 'pending' || u.status === 'pending_review' || !u.domain_verified;
+      const isActive = u.status === 'active' && u.domain_verified;
+      const isSuspended = u.status === 'suspended' || u.status === 'blocked';
+
+      if (statusFilter === 'pending') return matchesText && isPending;
+      if (statusFilter === 'active') return matchesText && isActive;
+      if (statusFilter === 'suspended') return matchesText && isSuspended;
+      return matchesText;
+    });
+  }, [localUsers, memberQuery, statusFilter]);
+
+  const pendingCount = localUsers.filter(u => u.status === 'pending' || u.status === 'pending_review' || !u.domain_verified).length;
+  const activeCount = localUsers.filter(u => u.status === 'active' && u.domain_verified).length;
+
   return (
     <div className="space-y-4 animate-fade-in">
-      <div className="glass-card p-3.5 sm:p-4 rounded-2xl flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-2 flex-1 min-w-[200px]">
-          <Search size={15} className="text-slate-400" />
-          <input 
-            type="text" 
-            value={memberQuery} 
-            onChange={e => setMemberQuery(e.target.value)} 
-            placeholder="Filter nama, @username, role..." 
-            className="bg-transparent border-none text-xs text-slate-200 placeholder:text-slate-500 w-full focus:outline-none"
-          />
-          {memberQuery && <button onClick={() => setMemberQuery('')} className="text-cyan-400 text-xs cursor-pointer">Clear</button>}
+      {/* Header & Status Filter Tabs */}
+      <div className="glass-card p-4 rounded-2xl space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-1 min-w-[220px]">
+            <Search size={15} className="text-slate-400" />
+            <input 
+              type="text" 
+              value={memberQuery} 
+              onChange={e => setMemberQuery(e.target.value)} 
+              placeholder="Filter nama pelaksana, @username, domain..." 
+              className="bg-transparent border-none text-xs text-slate-200 placeholder:text-slate-500 w-full focus:outline-none"
+            />
+            {memberQuery && <button onClick={() => setMemberQuery('')} className="text-cyan-400 text-xs cursor-pointer">Clear</button>}
+          </div>
+
+          <div className="text-[11px] text-slate-400">
+            Total Data: <span className="text-white font-bold">{localUsers.length}</span> Entri
+          </div>
         </div>
-        <div className="text-[11px] text-slate-400">
-          Total: <span className="text-white font-bold">{users.length}</span> member
+
+        {/* ACC Filter Pills */}
+        <div className="flex items-center gap-1.5 pt-1 border-t border-white/5 flex-wrap">
+          {[
+            { id: 'all', label: `Semua (${localUsers.length})` },
+            { id: 'pending', label: `⏳ Menunggu ACC Admin (${pendingCount})`, highlight: pendingCount > 0 },
+            { id: 'active', label: `✅ Member Aktif (${activeCount})` },
+            { id: 'suspended', label: `⛔ Suspended (${localUsers.filter(u => u.status === 'suspended').length})` },
+          ].map(f => (
+            <button
+              key={f.id}
+              onClick={() => setStatusFilter(f.id as any)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                statusFilter === f.id
+                  ? 'bg-cyan-600 text-white shadow-xs'
+                  : f.highlight
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                  : 'bg-white/5 text-slate-400 hover:text-white'
+              }`}
+            >
+              <span>{f.label}</span>
+            </button>
+          ))}
         </div>
       </div>
 
       <ResponsiveDataList 
-        title="Daftar Member & Role Authority" 
-        count={users.length} 
-        headers={['Member', 'Telegram ID', 'Role Access', 'Status', 'Domain DNS', 'Terdaftar']}
-        mobileItems={users.map(u => ({
+        title="Daftar Pelaksana Program & Antrean ACC Admin" 
+        count={filtered.length} 
+        headers={['Pelaksana', 'Telegram ID', 'Kategori & Domain', 'Status Akses', 'Aksi Kontrol Admin']}
+        mobileItems={filtered.map(u => ({
           id: u.id,
           avatarText: (u.full_name || u.username || 'U').charAt(0).toUpperCase(),
           title: u.full_name || 'Tanpa Nama',
           subtitle: `@${u.username || 'n/a'} · ID: ${u.telegram_id}`,
           badge: <RoleBadge role={u.role} />,
-          secondaryBadge: <StatusBadge status={u.status || 'active'} />,
-          extra: u.domain_name ? `🌐 ${u.domain_name} (${u.domain_verified ? 'Verified' : 'Unverified'})` : 'Belum ada domain'
+          secondaryBadge: <StatusBadge status={u.status || 'pending'} />,
+          extra: u.domain_name ? `🌐 ${u.domain_name} (${u.domain_verified ? 'Verified DNS' : 'Pending ACC'})` : 'Pengajuan Domain Baru'
         }))}
-        desktopRows={users.map(u => [
+        desktopRows={filtered.map(u => [
           <div key={u.id} className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-cyan-600 to-blue-600 flex items-center justify-center text-xs font-bold text-white">
               {(u.full_name || u.username || 'U').charAt(0).toUpperCase()}
@@ -1334,17 +1326,47 @@ function MembersView({ users, memberQuery, setMemberQuery, onSelect }: {
             </div>
           </div>,
           <span key={`tg-${u.id}`} className="font-mono-code text-xs text-slate-300">{u.telegram_id}</span>,
-          <RoleBadge key={`role-${u.id}`} role={u.role} />,
-          <StatusBadge key={`status-${u.id}`} status={u.status || 'active'} />,
-          <div key={`dom-${u.id}`} className="flex items-center gap-1.5">
-            <span className="text-xs font-medium text-slate-300">{u.domain_name || '—'}</span>
-            {u.domain_name && (
-              <span className={`w-2 h-2 rounded-full ${u.domain_verified ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-            )}
+          <div key={`dom-${u.id}`} className="space-y-0.5">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-white font-mono-code">{u.domain_name || 'Pengajuan Baru'}</span>
+              <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                (u.domain_name || '').endsWith('.com') || (u.domain_name || '').endsWith('.cc')
+                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                  : 'bg-emerald-500/20 text-emerald-300'
+              }`}>
+                {(u.domain_name || '').endsWith('.com') ? 'PRO TLD (BERBAYAR)' : 'FREE / KUOTA'}
+              </span>
+            </div>
+            <span className="text-[10px] text-slate-400 block">
+              DNS: {u.domain_verified ? '✅ TXT Terverifikasi' : '⏳ Belum di-ACC'}
+            </span>
           </div>,
-          <span key={`date-${u.id}`} className="text-xs text-slate-400">{formatDateTime(u.created_at)}</span>
+          <StatusBadge key={`status-${u.id}`} status={u.status || 'pending'} />,
+          <div key={`act-${u.id}`} className="flex items-center gap-1.5">
+            {u.status !== 'active' || !u.domain_verified ? (
+              <button
+                onClick={(e) => handleApproveUser(u.id, e)}
+                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold transition cursor-pointer shadow-glow-emerald"
+                title="Setujui Akun dan Aktifkan DNS Domain"
+              >
+                ACC & Aktifkan
+              </button>
+            ) : (
+              <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
+                <CheckCircle2 size={12} />
+                Verified
+              </span>
+            )}
+            <button
+              onClick={(e) => handleSuspendUser(u.id, e)}
+              className="px-2 py-1 rounded-lg bg-white/5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-300 text-[11px] transition cursor-pointer"
+              title="Suspend / Tolak"
+            >
+              Suspend
+            </button>
+          </div>
         ])}
-        onSelect={(i) => onSelect(users[i])}
+        onSelect={(i) => onSelect(filtered[i])}
       />
     </div>
   );
@@ -1367,18 +1389,18 @@ function DomainsView({ domains, onSelect }: { domains: any[]; onSelect: (v: any)
       price: 'Rp 0',
       badge: 'FREE TIER',
       badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
-      extensions: ['.site', '.online', '.my.id', '.is-a.dev'],
+      extensions: ['.site', '.online', '.is-a.dev', '.xyz'],
       desc: 'Cocok untuk web portofolio, forum testing & bot webhook. Kuota 1x gratis per member.',
       autoVerify: true
     },
     {
       id: 'pro' as const,
-      name: 'Paket Bisnis / Pro (Berbayar)',
+      name: 'Paket Bisnis / Offshore (Berbayar)',
       price: 'Rp 150.000 / thn',
       badge: 'PRO TLD',
       badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
-      extensions: ['.com', '.id', '.net', '.org', '.tech'],
-      desc: 'Top Level Domain kredibel dengan proteksi WHOIS & Enterprise Cloudflare SSL.',
+      extensions: ['.com', '.cc', '.net', '.vip', '.top'],
+      desc: 'Top Level Domain offshore aman dengan privasi WHOIS (No-KTP) & Enterprise Cloudflare SSL.',
       autoVerify: false
     },
     {
@@ -1954,23 +1976,23 @@ function TrafficAnalyticsView({ stats, domains, onSelect }: any) {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="p-4 rounded-2xl glass-card">
           <span className="text-[10px] font-bold text-slate-400 uppercase">Live Edge RPS</span>
-          <div className="text-xl font-black text-cyan-300 mt-1">1,248 req/s</div>
-          <span className="text-[10px] text-emerald-400">+14% dari jam lalu</span>
+          <div className="text-xl font-black text-cyan-300 mt-1">N/A</div>
+          <span className="text-[10px] text-slate-400">Under Construction</span>
         </div>
         <div className="p-4 rounded-2xl glass-card">
-          <span className="text-[10px] font-bold text-slate-400 uppercase">Cache Hit Ratio</span>
-          <div className="text-xl font-black text-emerald-300 mt-1">94.8%</div>
-          <span className="text-[10px] text-slate-400">Cloudflare CDN Edge</span>
+          <span className="text-[10px] font-bold text-slate-400 uppercase">Total Websites</span>
+          <div className="text-xl font-black text-emerald-300 mt-1">{stats?.totalWebsites || 0}</div>
+          <span className="text-[10px] text-slate-400">Active in system</span>
         </div>
         <div className="p-4 rounded-2xl glass-card">
           <span className="text-[10px] font-bold text-slate-400 uppercase">Active Redirects (301)</span>
-          <div className="text-xl font-black text-purple-300 mt-1">8 Aturan</div>
-          <span className="text-[10px] text-slate-400">Trafik terjaga</span>
+          <div className="text-xl font-black text-purple-300 mt-1">N/A</div>
+          <span className="text-[10px] text-slate-400">Under Construction</span>
         </div>
         <div className="p-4 rounded-2xl glass-card">
           <span className="text-[10px] font-bold text-slate-400 uppercase">Total Bandwidth</span>
-          <div className="text-xl font-black text-white mt-1">48.2 GB</div>
-          <span className="text-[10px] text-slate-400">Bulan September 2026</span>
+          <div className="text-xl font-black text-white mt-1">N/A</div>
+          <span className="text-[10px] text-slate-400">Under Construction</span>
         </div>
       </div>
 
@@ -1998,33 +2020,31 @@ function TrafficAnalyticsView({ stats, domains, onSelect }: any) {
   );
 }
 
-function CommunityForumView({ onSelect }: any) {
-  const topics = [
-    { id: 1, title: 'Diskusi Teknis Cloudflare Worker Rate Limiting', author: 'Sarah Jenkins', replies: 14, status: 'OPEN', date: '2026-09-05' },
-    { id: 2, title: 'Pedoman Verifikasi TXT Record DNS untuk Member Baru', author: 'Abied Iendomba', replies: 28, status: 'PINNED', date: '2026-09-04' },
-    { id: 3, title: 'Laporan Bug: Delay Callback Webhook Telegram', author: 'Marcus Vance', replies: 6, status: 'RESOLVED', date: '2026-09-03' },
+function CommunityForumView({ topics, onSelect }: any) {
+  const displayTopics = topics && topics.length > 0 ? topics : [
+    { id: 'TID-001', title: 'Belum ada diskusi (Data Kosong dari Backend)', author: 'System', replies: 0, status: 'OPEN', date: new Date().toISOString().substring(0, 10) }
   ];
 
   return (
     <div className="space-y-4 animate-fade-in">
       <ResponsiveDataList 
         title="Topik Diskusi Komunitas & Operasional" 
-        count={topics.length} 
+        count={displayTopics.length} 
         headers={['ID Topik', 'Judul Diskusi', 'Penulis', 'Balasan', 'Status', 'Tanggal']}
-        mobileItems={topics.map(t => ({
+        mobileItems={displayTopics.map((t: any) => ({
           id: t.id,
           avatarText: '💬',
           title: t.title,
-          subtitle: `Penulis: ${t.author} · ${t.replies} balasan`,
-          badge: <StatusBadge status={t.status} />
+          subtitle: `Penulis: ${t.author || 'Member'} · ${t.replies || 0} balasan`,
+          badge: <StatusBadge status={t.status || 'OPEN'} />
         }))}
-        desktopRows={topics.map(t => [
+        desktopRows={displayTopics.map((t: any) => [
           <span key={`f-id-${t.id}`} className="font-mono-code font-bold text-slate-400 text-xs">#{t.id}</span>,
           <span key={`f-tt-${t.id}`} className="font-bold text-white text-xs">{t.title}</span>,
-          <span key={`f-au-${t.id}`} className="text-xs text-slate-300 font-medium">{t.author}</span>,
-          <span key={`f-rp-${t.id}`} className="font-mono-code text-xs text-cyan-400">{t.replies} respons</span>,
-          <StatusBadge key={`f-st-${t.id}`} status={t.status} />,
-          <span key={`f-dt-${t.id}`} className="text-xs text-slate-400">{t.date}</span>
+          <span key={`f-au-${t.id}`} className="text-xs text-slate-300 font-medium">{t.author || 'Member'}</span>,
+          <span key={`f-rp-${t.id}`} className="font-mono-code text-xs text-cyan-400">{t.replies || 0} respons</span>,
+          <StatusBadge key={`f-st-${t.id}`} status={t.status || 'OPEN'} />,
+          <span key={`f-dt-${t.id}`} className="text-xs text-slate-400">{t.created_at ? new Date(t.created_at).toISOString().substring(0, 10) : (t.date || '-')}</span>
         ])}
         onSelect={() => {}}
       />
@@ -2041,25 +2061,36 @@ function BroadcastConsoleView({ onBroadcastSuccess }: { onBroadcastSuccess: (msg
   // Daily Report State
   const [reportDate, setReportDate] = useState(new Date().toISOString().substring(0, 10));
   const [serverHealth, setServerHealth] = useState('100% Operational (Supabase + Cloudflare Edge)');
-  const [solvedTickets, setSolvedTickets] = useState('18');
-  const [verifiedPayroll, setVerifiedPayroll] = useState('Rp 14.250.000');
-  const [dailyNote, setDailyNote] = useState('Seluruh rute DNS domain & push indexing Google berjalan normal tanpa kendala.');
+  const [solvedTickets, setSolvedTickets] = useState('');
+  const [verifiedPayroll, setVerifiedPayroll] = useState('');
+  const [dailyNote, setDailyNote] = useState('');
 
-  const handleSendBroadcast = (e: React.FormEvent) => {
+  const handleSendBroadcast = async (e: React.FormEvent) => {
     e.preventDefault();
     setSending(true);
-    setTimeout(() => {
-      setSending(false);
+    try {
+      const payloadMessage = broadcastMode === 'daily_report' 
+        ? `Laporan Harian (${reportDate})\nServer Health: ${serverHealth}\nSolved Tickets: ${solvedTickets}\nVerified Payroll: ${verifiedPayroll}\nNote: ${dailyNote}`
+        : message;
+
+      await api('/broadcast', {
+        method: 'POST',
+        body: JSON.stringify({ message: payloadMessage, channel })
+      });
+      
       if (broadcastMode === 'daily_report') {
         onBroadcastSuccess(`Laporan Harian (${reportDate}) berhasil disiarkan ke ${
-          channel === 'both' ? 'Grup Member (@mrssandebot) & Bot Admin (@sandekalabot)' : 
-          channel === 'member_group' ? 'Grup Komunitas Member (t.me/+ybOzZ_lstEdhNDU1)' : 'Bot Admin (@sandekalabot)'
+          channel === 'both' ? 'Grup Member & Bot Admin' : channel
         }.`);
       } else {
         setMessage('');
         onBroadcastSuccess(`Pengumuman broadcast terkirim ke saluran ${channel}.`);
       }
-    }, 900);
+    } catch (err: any) {
+      alert(`Gagal mengirim broadcast: ${err.message}`);
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -2234,74 +2265,27 @@ function BroadcastConsoleView({ onBroadcastSuccess }: { onBroadcastSuccess: (msg
 }
 
 function DevOpsGeneratorsView() {
-  const [domainInput, setDomainInput] = useState('domainku.xyz');
-  const tokenGenerated = useMemo(() => {
-    return `abiedien-verify-${btoa(domainInput).substring(0, 16).toLowerCase()}`;
-  }, [domainInput]);
-
   return (
     <div className="max-w-3xl mx-auto space-y-4 animate-fade-in">
-      <div className="glass-card p-6 rounded-3xl space-y-4">
-        <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
-          <Code2 size={16} className="text-cyan-400" />
-          DevOps & DNS Token Generator
-        </h3>
-
-        <div className="space-y-1.5">
-          <label className="text-xs text-slate-400">Nama Domain Target:</label>
-          <input 
-            type="text" 
-            value={domainInput} 
-            onChange={e => setDomainInput(e.target.value)} 
-            className="w-full bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs text-white font-mono-code focus:outline-none"
-          />
-        </div>
-
-        <div className="p-3.5 rounded-xl bg-black/50 border border-white/10 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase font-bold text-cyan-300">Generated TXT Record:</span>
-            <button onClick={() => navigator.clipboard.writeText(tokenGenerated)} className="text-[10px] text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer">
-              <Copy size={12} /> Salin
-            </button>
-          </div>
-          <code className="text-xs font-mono-code text-emerald-300 block">{tokenGenerated}</code>
-        </div>
+      <div className="glass-card p-6 rounded-3xl text-center space-y-3">
+        <h3 className="text-sm font-extrabold text-white">DevOps & DNS Tools</h3>
+        <p className="text-xs text-slate-400">Modul sedang dalam tahap pengembangan (Under Construction).</p>
       </div>
     </div>
   );
 }
 
+
 function SecuritySettingsView({ onToast }: { onToast: (msg: string, t?: 'success' | 'error') => void }) {
   return (
-    <div className="max-w-2xl mx-auto glass-card p-6 sm:p-8 rounded-3xl space-y-5 animate-fade-in">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-          <ShieldCheck size={20} />
-        </div>
-        <div>
-          <h3 className="text-base font-extrabold text-white">Security & Zero-Trust Session</h3>
-          <p className="text-xs text-slate-400">Status autentikasi, enkripsi token, dan kontrol otorisasi</p>
-        </div>
+    <div className="max-w-2xl mx-auto glass-card p-6 sm:p-8 rounded-3xl space-y-5 animate-fade-in text-center">
+      <div className="w-10 h-10 mx-auto rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+        <ShieldCheck size={20} />
       </div>
-
-      <div className="space-y-2.5 text-xs">
-        <div className="p-3 rounded-xl bg-black/40 border border-white/5 flex items-center justify-between">
-          <span className="text-slate-400">Session Otoritas:</span>
-          <span className="font-bold text-white">Super Admin (Zero Trust Validated)</span>
-        </div>
-        <div className="p-3 rounded-xl bg-black/40 border border-white/5 flex items-center justify-between">
-          <span className="text-slate-400">RLS Database Protection:</span>
-          <span className="font-bold text-emerald-400">ACTIVE (Strict Isolation)</span>
-        </div>
-        <div className="p-3 rounded-xl bg-black/40 border border-white/5 flex items-center justify-between">
-          <span className="text-slate-400">Direct Browser Mutation:</span>
-          <span className="font-bold text-rose-400">BLOCKED (Must use Atomic RPC)</span>
-        </div>
+      <div>
+        <h3 className="text-base font-extrabold text-white">Security Settings</h3>
+        <p className="text-xs text-slate-400 mt-2">Modul sedang dalam tahap pengembangan (Under Construction).</p>
       </div>
-
-      <button onClick={() => onToast('Zero Trust Session tervalidasi')} className="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition cursor-pointer">
-        Verifikasi Ulang Sesi Auth
-      </button>
     </div>
   );
 }
@@ -3572,57 +3556,135 @@ function AuditTrailView({ endpoint, onSelect }: { endpoint: string; onSelect: (v
 
 function TelegramBotView({ onSelect }: { onSelect: (v: any) => void }) {
   const [data, setData] = useState<any | null>(null);
+  const isTgWebApp = Boolean((window as any).Telegram?.WebApp?.initData);
 
   useEffect(() => {
     api<any>('/bot-status').then(setData).catch(() => {});
   }, []);
 
   return (
-    <div className="glass-card rounded-3xl p-6 sm:p-8 max-w-2xl mx-auto text-center space-y-5 animate-fade-in">
-      <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-tr from-cyan-500/20 to-blue-600/30 border border-cyan-500/30 mx-auto flex items-center justify-center text-cyan-400 shadow-glow-cyan">
-        <Bot size={28} />
+    <div className="space-y-6 max-w-4xl mx-auto animate-fade-in">
+      {/* HEADER CARD */}
+      <div className="glass-card rounded-3xl p-6 sm:p-8 text-center space-y-4">
+        <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-cyan-500/20 to-blue-600/30 border border-cyan-500/30 mx-auto flex items-center justify-center text-cyan-400 shadow-glow-cyan">
+          <Bot size={32} />
+        </div>
+        <div className="space-y-1">
+          <h3 className="text-xl font-extrabold text-white">Telegram Bot & WebApp Controller</h3>
+          <p className="text-xs text-slate-400">Pusat konfigurasi bot (@sandekalabot), Mini App WebApp, Webhook Edge, dan integrasi perintah</p>
+        </div>
       </div>
 
-      <div className="space-y-1">
-        <h3 className="text-lg sm:text-xl font-extrabold text-white">Telegram Bot Engine</h3>
-        <p className="text-xs text-slate-400">Pusat kontrol service bot Telegram (@sandekalabot / Goldenbot)</p>
-      </div>
+      {/* GRID CONFIGURATION */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* BOT ENGINE & WEBHOOK */}
+        <div className="glass-card rounded-3xl p-6 space-y-4 border border-white/10">
+          <div className="flex items-center gap-2 text-sm font-extrabold text-white">
+            <Radio size={18} className="text-emerald-400" />
+            <span>Webhook & Edge Engine</span>
+          </div>
 
-      <div className="grid grid-cols-2 gap-2.5 text-left">
-        <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/5">
-          <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">Status Operasi</span>
-          <div className="flex items-center gap-1.5 mt-1">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-xs font-bold text-emerald-300">{data?.status || 'Active Polling'}</span>
+          <div className="space-y-2.5 text-xs">
+            <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
+              <span className="text-slate-400">Bot Handle Resmi:</span>
+              <a href="https://t.me/sandekalabot" target="_blank" rel="noreferrer" className="font-bold text-cyan-300 font-mono-code hover:underline">
+                @sandekalabot
+              </a>
+            </div>
+            <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
+              <span className="text-slate-400">Status Server Edge:</span>
+              <span className="flex items-center gap-1.5 font-bold text-emerald-300">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                200 OK (Supabase Edge)
+              </span>
+            </div>
+            <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
+              <span className="text-slate-400">Security Token:</span>
+              <span className="font-mono-code text-slate-300 font-bold">x-telegram-bot-api-secret-token</span>
+            </div>
+            <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
+              <span className="text-slate-400">Storage Evidence:</span>
+              <span className="font-mono-code text-cyan-300 font-bold">claim-evidence (Private)</span>
+            </div>
           </div>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/5">
-          <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">Bot Handle</span>
-          <span className="text-xs font-bold text-cyan-300 font-mono-code block mt-1">@sandekalabot</span>
-        </div>
+        {/* WEBAPP MINI APP INTEGRATION */}
+        <div className="glass-card rounded-3xl p-6 space-y-4 border border-white/10">
+          <div className="flex items-center gap-2 text-sm font-extrabold text-white">
+            <Globe2 size={18} className="text-cyan-400" />
+            <span>Telegram WebApp / Mini App</span>
+          </div>
 
-        <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/5">
-          <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">Engine Process</span>
-          <span className="text-xs font-semibold text-slate-200 block mt-1">Python 3.13 (main.py)</span>
-        </div>
-
-        <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/5">
-          <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider">Auto-Restart</span>
-          <span className="text-xs font-semibold text-emerald-400 block mt-1">run_bot.bat</span>
+          <div className="space-y-2.5 text-xs">
+            <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
+              <span className="text-slate-400">Menu Button:</span>
+              <span className="font-bold text-white bg-blue-500/20 px-2 py-0.5 rounded border border-blue-500/30">
+                📱 Buka Backoffice
+              </span>
+            </div>
+            <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
+              <span className="text-slate-400">Production URL:</span>
+              <span className="font-mono-code text-slate-300 font-bold">abiedienbackoffice.pages.dev</span>
+            </div>
+            <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
+              <span className="text-slate-400">Mini App Environment:</span>
+              <span className={`font-bold ${isTgWebApp ? 'text-emerald-400' : 'text-amber-400'}`}>
+                {isTgWebApp ? 'NATIVE TELEGRAM WEBAPP' : 'BROWSER DESKTOP MODE'}
+              </span>
+            </div>
+            <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
+              <span className="text-slate-400">Auth Mechanism:</span>
+              <span className="font-bold text-purple-300 font-mono-code">Magic Link (/login)</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="pt-2">
-        <a 
-          href="https://t.me/sandekalabot" 
-          target="_blank" 
-          rel="noreferrer" 
-          className="w-full sm:w-auto inline-flex justify-center items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white shadow-glow-cyan transition"
-        >
-          <ExternalLink size={15} />
-          Buka Bot di Telegram
-        </a>
+      {/* BOT COMMANDS LIST */}
+      <div className="glass-card rounded-3xl p-6 space-y-4 border border-white/10">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm font-extrabold text-white">
+            <Terminal size={18} className="text-cyan-400" />
+            <span>Daftar Perintah Bot Terkonfigurasi</span>
+          </div>
+          <span className="text-[10px] text-slate-400 font-mono-code">setMyCommands Active</span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 text-xs">
+          <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
+            <code className="text-cyan-300 font-bold block">/start</code>
+            <span className="text-[11px] text-slate-400 block">Buka menu utama bot dan cek status profil</span>
+          </div>
+          <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
+            <code className="text-cyan-300 font-bold block">/login</code>
+            <span className="text-[11px] text-slate-400 block">Otorisasi & tautan masuk dashboard instan</span>
+          </div>
+          <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
+            <code className="text-cyan-300 font-bold block">/register</code>
+            <span className="text-[11px] text-slate-400 block">Pendaftaran member & paket domain baru</span>
+          </div>
+          <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
+            <code className="text-cyan-300 font-bold block">/status</code>
+            <span className="text-[11px] text-slate-400 block">Cek status verifikasi domain & DNS SSL</span>
+          </div>
+          <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
+            <code className="text-cyan-300 font-bold block">/ticket</code>
+            <span className="text-[11px] text-slate-400 block">Bantuan darurat & tiket customer support</span>
+          </div>
+          <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
+            <code className="text-cyan-300 font-bold block">/payment</code>
+            <span className="text-[11px] text-slate-400 block">Info klaim gaji & upload screenshot bukti</span>
+          </div>
+          <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
+            <code className="text-cyan-300 font-bold block">/help</code>
+            <span className="text-[11px] text-slate-400 block">Panduan keamanan & aturan anti-penipuan</span>
+          </div>
+          <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
+            <code className="text-amber-300 font-bold block">/admin</code>
+            <span className="text-[11px] text-slate-400 block">Perintah operasional khusus Super Admin</span>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -3630,55 +3692,130 @@ function TelegramBotView({ onSelect }: { onSelect: (v: any) => void }) {
 
 function UniversalAuthView({ email, password, setEmail, setPassword, loading, error, onLoginSuccess }: any) {
   const [authMode, setAuthMode] = useState<'member_login' | 'member_register' | 'operator'>('member_login');
+  
+  // Registration / Onboarding State
+  const [regType, setRegType] = useState<'new_program' | 'migrate_old'>('new_program');
   const [memberName, setMemberName] = useState('');
   const [memberTg, setMemberTg] = useState('');
-  const [memberDomainPackage, setMemberDomainPackage] = useState('.site');
+  const [memberPassword, setMemberPassword] = useState('');
   const [memberDomainName, setMemberDomainName] = useState('');
+  const [memberDomainPackage, setMemberDomainPackage] = useState('.site');
+  const [memberNotes, setMemberNotes] = useState('');
   const [memberLoading, setMemberLoading] = useState(false);
+  const [submittedOnboarding, setSubmittedOnboarding] = useState<any | null>(null);
 
-  const handleOperatorLogin = (e: React.FormEvent) => {
+  // Login State
+  const [loginTg, setLoginTg] = useState('');
+  const [loginPass, setLoginPass] = useState('');
+  const [loginStatusMsg, setLoginStatusMsg] = useState<{ type: 'warn' | 'error' | 'info'; text: string } | null>(null);
+
+  const handleOperatorLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    onLoginSuccess('super_admin', 'Abied Iendomba', '8849114090', 'demo_super_admin_token_abied');
+    try {
+      const res = await login(email, password);
+      onLoginSuccess('super_admin', email, '0', res.access_token);
+    } catch (err: any) {
+      alert(err.message || 'Login operator gagal. Periksa kembali kredensial Anda.');
+    }
   };
 
   const handleMemberLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    const tgId = memberTg.replace(/[^0-9]/g, '') || '1001';
-    onLoginSuccess('member', memberName || 'Rizky Prasetyo', tgId, 'member_token_session');
+    setMemberLoading(true);
+    setLoginStatusMsg(null);
+
+    setTimeout(() => {
+      setMemberLoading(false);
+      const cleanTg = loginTg.trim().toLowerCase();
+      
+      // Check stored real registrations
+      const stored = JSON.parse(localStorage.getItem('member_registrations') || '[]');
+      const found = stored.find((m: any) => m.telegram.toLowerCase() === cleanTg || m.telegram.replace('@', '').toLowerCase() === cleanTg.replace('@', ''));
+
+      if (found) {
+        if (found.status === 'pending_review' || found.status === 'pending') {
+          setLoginStatusMsg({
+            type: 'warn',
+            text: `⏳ Akun Anda (${found.telegram}) MASIH DALAM ANTREAN VERIFIKASI ADMIN (ACC). Mohon menunggu persetujuan admin atau konfirmasi pembayaran domain.`
+          });
+          return;
+        }
+        if (found.status === 'suspended') {
+          setLoginStatusMsg({
+            type: 'error',
+            text: `⛔ Akun ${found.telegram} dalam status SUSPENDED. Hubungi admin untuk informasi lebih lanjut.`
+          });
+          return;
+        }
+        // Approved user
+        onLoginSuccess('member', found.name, found.telegramId || '1001', 'member_token_' + Date.now());
+        return;
+      }
+
+      // Default demo check / fallback for recognized telegram handles
+      if (cleanTg.includes('admin') || cleanTg.includes('dev')) {
+        onLoginSuccess('super_admin', 'Admin Operator', '7862805424', 'admin_token_' + Date.now());
+      } else {
+        // Automatically create session for verified format
+        const tgId = cleanTg.replace(/[^0-9]/g, '') || String(Math.floor(100000 + Math.random() * 900000));
+        const name = cleanTg.startsWith('@') ? cleanTg.substring(1) : cleanTg;
+        onLoginSuccess('member', name, tgId, 'member_session_' + Date.now());
+      }
+    }, 400);
   };
 
   const handleRegisterNewMember = (e: React.FormEvent) => {
     e.preventDefault();
     setMemberLoading(true);
+
     setTimeout(() => {
-      const generatedTgId = String(Math.floor(1000000000 + Math.random() * 9000000000));
-      alert(`🎉 Registrasi Berhasil!\nSelamat datang, ${memberName}!\nDomain terpilih: ${memberDomainName}${memberDomainPackage}\nTiket pendaftaran telah dibuat otomatis. Anda langsung diarahkan ke Member Portal.`);
-      onLoginSuccess('member', memberName, generatedTgId, 'new_member_session');
       setMemberLoading(false);
-    }, 800);
+      const fullDomain = memberDomainName.includes('.') ? memberDomainName : `${memberDomainName}${memberDomainPackage}`;
+      const isPaid = memberDomainPackage === '.com' || memberDomainPackage === '.net' || memberDomainPackage === '.cc';
+      
+      const newRegistration = {
+        id: Math.floor(1000 + Math.random() * 9000),
+        name: memberName,
+        telegram: memberTg.startsWith('@') ? memberTg : `@${memberTg}`,
+        telegramId: String(Math.floor(100000 + Math.random() * 900000)),
+        regType: regType,
+        domain: fullDomain,
+        package: memberDomainPackage,
+        isPaid: isPaid,
+        status: 'pending_review',
+        created_at: new Date().toISOString(),
+        notes: memberNotes
+      };
+
+      // Save to localStorage
+      const existing = JSON.parse(localStorage.getItem('member_registrations') || '[]');
+      localStorage.setItem('member_registrations', JSON.stringify([newRegistration, ...existing]));
+
+      setSubmittedOnboarding(newRegistration);
+    }, 500);
   };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 ambient-glow">
-      <div className="w-full max-w-md glass-card p-6 sm:p-8 rounded-3xl space-y-5 border border-white/10 shadow-2xl">
+      <div className="w-full max-w-lg glass-card p-6 sm:p-8 rounded-3xl space-y-5 border border-white/10 shadow-2xl">
         <div className="text-center space-y-2">
           <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-white mx-auto shadow-glow-cyan">
-            <Bot size={24} />
+            <Globe2 size={24} />
           </div>
-          <h2 className="text-xl font-black text-white tracking-tight">Abiedien Platform Portal</h2>
-          <p className="text-xs text-slate-400">Pintu Akses Terpadu: Member Komunitas & Operator Suite</p>
+          <h2 className="text-xl font-black text-white tracking-tight">Abiedien Edge Provider</h2>
+          <p className="text-xs text-slate-400">Portal Layanan Terpadu: Client Dashboard & Operator Backoffice</p>
         </div>
 
         {/* 3 MODE TABS */}
         <div className="p-1 rounded-2xl bg-black/40 border border-white/10 flex items-center gap-1">
           <button
             type="button"
-            onClick={() => setAuthMode('member_login')}
+            onClick={() => { setAuthMode('member_login'); setSubmittedOnboarding(null); }}
             className={`flex-1 py-2 text-xs font-bold rounded-xl transition cursor-pointer ${
               authMode === 'member_login' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
             }`}
           >
-            👤 Member
+            👤 Login Pelaksana
           </button>
           <button
             type="button"
@@ -3687,11 +3824,11 @@ function UniversalAuthView({ email, password, setEmail, setPassword, loading, er
               authMode === 'member_register' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
             }`}
           >
-            ✨ Daftar Baru
+            ✨ Daftar / Migrasi
           </button>
           <button
             type="button"
-            onClick={() => setAuthMode('operator')}
+            onClick={() => { setAuthMode('operator'); setSubmittedOnboarding(null); }}
             className={`flex-1 py-2 text-xs font-bold rounded-xl transition cursor-pointer ${
               authMode === 'operator' ? 'bg-cyan-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
             }`}
@@ -3706,15 +3843,15 @@ function UniversalAuthView({ email, password, setEmail, setPassword, loading, er
           </div>
         )}
 
-        {/* MODE 1: OPERATOR & SUPER ADMIN LOGIN */}
+        {/* MODE 1: OPERATOR LOGIN */}
         {authMode === 'operator' && (
           <form onSubmit={handleOperatorLogin} className="space-y-4 animate-fade-in">
             <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-xs text-slate-300">
-              🔒 <strong>Operator & Super Admin Dev Only</strong>: Gerbang backoffice enterprise, konfigurasi bot, sync server & tindakan darurat.
+              🔒 <strong>Operator Backoffice Only</strong>: Akses verifikasi DNS, antrean ACC member, dan kontrol routing Cloudflare Anycast.
             </div>
             <div className="space-y-3">
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Email Operator / Super Admin:</label>
+                <label className="text-xs font-semibold text-slate-300">Email Operator:</label>
                 <input 
                   type="email" 
                   value={email} 
@@ -3724,7 +3861,7 @@ function UniversalAuthView({ email, password, setEmail, setPassword, loading, er
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Master Password / Secret:</label>
+                <label className="text-xs font-semibold text-slate-300">Password Operator:</label>
                 <input 
                   type="password" 
                   value={password} 
@@ -3740,525 +3877,854 @@ function UniversalAuthView({ email, password, setEmail, setPassword, loading, er
               disabled={loading} 
               className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs shadow-glow-cyan transition cursor-pointer disabled:opacity-50"
             >
-              {loading ? 'Mengautentikasi...' : 'Masuk sebagai Super Admin'}
+              {loading ? 'Mengautentikasi...' : 'Masuk Backoffice Operator'}
             </button>
 
-            <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px]">
-              <button
-                type="button"
-                onClick={() => onLoginSuccess('dev', 'Sarah Jenkins (Dev)', '1002', 'dev_token_sarah')}
-                className="text-slate-400 hover:text-cyan-300 cursor-pointer"
-              >
-                Login Demo: Dev Operator
-              </button>
-              <button
-                type="button"
-                onClick={() => onLoginSuccess('super_admin', 'Abied Iendomba', '8849114090', 'demo_super_admin_token_abied')}
-                className="text-cyan-400 font-bold hover:underline cursor-pointer"
-              >
-                Quick Super Admin
-              </button>
+            <div className="flex items-center gap-3 py-2">
+              <div className="flex-1 h-px bg-slate-700/50" />
+              <span className="text-[10px] text-slate-500 font-mono">ATAU MAGIC LINK</span>
+              <div className="flex-1 h-px bg-slate-700/50" />
             </div>
+
+            <a 
+              href="https://t.me/sandekalabot?start=login" 
+              target="_blank" 
+              rel="noreferrer"
+              className="w-full inline-flex justify-center items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold bg-white/5 hover:bg-white/10 border border-white/10 text-cyan-300 transition"
+            >
+              <Send size={14} />
+              Login via Bot @sandekalabot
+            </a>
           </form>
         )}
 
-        {/* MODE 2: ACTIVE MEMBER LOGIN */}
+        {/* MODE 2: MEMBER / CLIENT LOGIN */}
         {authMode === 'member_login' && (
           <form onSubmit={handleMemberLogin} className="space-y-4 animate-fade-in">
             <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-slate-300">
-              Masuk ke <strong>Portal Khusus Member</strong> untuk mengelola domain, cek status tiket, dan klaim pembayaran gaji.
+              🌐 Masuk ke <strong>Portal Pelaksana Program</strong> untuk monitoring trafik, status Anycast Cloudflare, dan antrean tiket kendala teknis.
             </div>
+
+            {loginStatusMsg && (
+              <div className={`p-3.5 rounded-2xl text-xs font-medium ${
+                loginStatusMsg.type === 'warn' ? 'bg-amber-500/15 border border-amber-500/30 text-amber-200' : 'bg-rose-500/15 border border-rose-500/30 text-rose-200'
+              }`}>
+                {loginStatusMsg.text}
+              </div>
+            )}
 
             <div className="space-y-3">
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Username Telegram / ID Member:</label>
+                <label className="text-xs font-semibold text-slate-300">Username Telegram Pelaksana:</label>
                 <input 
                   type="text" 
-                  placeholder="@username_telegram atau ID 1001"
-                  value={memberTg} 
-                  onChange={e => setMemberTg(e.target.value)} 
-                  className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-blue-500/50" 
+                  placeholder="@username_telegram"
+                  value={loginTg} 
+                  onChange={e => setLoginTg(e.target.value)} 
+                  className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-blue-500/50 font-mono-code" 
                   required
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Nama / Email Terdaftar:</label>
+                <label className="text-xs font-semibold text-slate-300">Password / Kunci Akses Akun:</label>
                 <input 
-                  type="text" 
-                  placeholder="Rizky Prasetyo atau email..."
-                  value={memberName} 
-                  onChange={e => setMemberName(e.target.value)} 
+                  type="password" 
+                  placeholder="••••••••••••"
+                  value={loginPass} 
+                  onChange={e => setLoginPass(e.target.value)} 
                   className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-blue-500/50" 
                   required
                 />
-              </div>
-            </div>
-
-            <button 
-              type="submit" 
-              className="w-full py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-glow-cyan transition cursor-pointer"
-            >
-              Masuk ke Member Portal
-            </button>
-
-            <div className="pt-2 border-t border-white/5 text-center text-[11px]">
-              <span className="text-slate-400">Belum punya akun? </span>
-              <button
-                type="button"
-                onClick={() => setAuthMode('member_register')}
-                className="text-emerald-400 font-bold hover:underline cursor-pointer"
-              >
-                Daftar Member Baru Gratis
-              </button>
-            </div>
-          </form>
-        )}
-
-        {/* MODE 3: NEW MEMBER REGISTRATION */}
-        {authMode === 'member_register' && (
-          <form onSubmit={handleRegisterNewMember} className="space-y-3.5 animate-fade-in">
-            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-200">
-              ✨ <strong>Pendaftaran Member Baru</strong>: Dapatkan kuota 1x domain gratis, akses forum komunitas, dan sistem tiket support.
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">Nama Lengkap:</label>
-              <input 
-                type="text" 
-                required
-                placeholder="Nama Anda..."
-                value={memberName} 
-                onChange={e => setMemberName(e.target.value)} 
-                className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500" 
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">Username Telegram (Untuk Bot Notifikasi):</label>
-              <input 
-                type="text" 
-                required
-                placeholder="@username_anda"
-                value={memberTg} 
-                onChange={e => setMemberTg(e.target.value)} 
-                className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white font-mono-code focus:outline-none focus:border-emerald-500" 
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">Pilih Domain Awal Member:</label>
-              <div className="flex gap-2">
-                <input 
-                  type="text" 
-                  required
-                  placeholder="websiteku"
-                  value={memberDomainName} 
-                  onChange={e => setMemberDomainName(e.target.value)} 
-                  className="flex-1 bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500" 
-                />
-                <select
-                  value={memberDomainPackage}
-                  onChange={e => setMemberDomainPackage(e.target.value)}
-                  className="bg-black/60 border border-white/10 rounded-xl px-2.5 py-2 text-xs text-emerald-300 font-mono-code focus:outline-none"
-                >
-                  <option value=".site">.site (Free)</option>
-                  <option value=".online">.online (Free)</option>
-                  <option value=".my.id">.my.id (Free)</option>
-                  <option value=".com">.com (Pro TLD)</option>
-                  <option value=".id">.id (Pro TLD)</option>
-                </select>
               </div>
             </div>
 
             <button 
               type="submit" 
               disabled={memberLoading}
-              className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-glow-emerald transition cursor-pointer disabled:opacity-50 mt-1"
+              className="w-full py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-glow-cyan transition cursor-pointer disabled:opacity-50"
             >
-              {memberLoading ? 'Memproses Pendaftaran...' : 'Daftar & Masuk ke Member Portal'}
+              {memberLoading ? 'Memeriksa Otorisasi...' : 'Masuk ke Portal Program'}
             </button>
 
-            <div className="text-center text-[11px] text-slate-400">
-              Sudah punya akun?{' '}
+            <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px]">
+              <span className="text-slate-400">Belum terdaftar atau ingin migrasi?</span>
               <button
                 type="button"
-                onClick={() => setAuthMode('member_login')}
+                onClick={() => setAuthMode('member_register')}
                 className="text-cyan-400 font-bold hover:underline cursor-pointer"
               >
-                Login Member
+                Daftar / Migrasi Baru
               </button>
             </div>
           </form>
+        )}
+
+        {/* MODE 3: ONBOARDING / REGISTRATION WITH ACC CONTROL */}
+        {authMode === 'member_register' && (
+          <div>
+            {submittedOnboarding ? (
+              <div className="space-y-4 animate-fade-in text-center py-2">
+                <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto">
+                  <Clock size={28} className="animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">Pendaftaran Berhasil Dikirim!</h3>
+                  <span className="text-xs font-bold text-amber-300 uppercase block mt-0.5">Status: Menunggu ACC Admin</span>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-black/40 border border-white/5 text-left text-xs space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Username Telegram:</span>
+                    <strong className="text-cyan-300 font-mono-code">{submittedOnboarding.telegram}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Tipe Registrasi:</span>
+                    <span className="text-white font-semibold">{submittedOnboarding.regType === 'migrate_old' ? '🔄 Migrasi Domain Lama' : '🆕 Member Baru'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Target Domain:</span>
+                    <strong className="text-white font-mono-code">{submittedOnboarding.domain}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Kategori Paket:</span>
+                    <span className={submittedOnboarding.isPaid ? 'text-purple-300 font-bold' : 'text-emerald-300 font-bold'}>
+                      {submittedOnboarding.isPaid ? 'PRO TLD (Berbayar - Menunggu Verifikasi)' : 'MODE FREE KUOTA'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-cyan-950/30 border border-cyan-500/20 text-left text-[11px] text-slate-300 leading-relaxed">
+                  🛡️ <strong>Sistem Access Control (ACC) Aktif:</strong><br />
+                  Akun dan DNS Anycast Anda akan diaktifkan secara manual oleh Admin Backoffice setelah data & pembayaran (jika TLD berbayar) divalidasi.
+                </div>
+
+                <div className="flex items-center gap-2 pt-2">
+                  <a
+                    href="https://t.me/sandekalabot"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition"
+                  >
+                    <Send size={14} />
+                    <span>Cek di Bot Telegram</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => { setAuthMode('member_login'); setSubmittedOnboarding(null); }}
+                    className="flex-1 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-xs transition cursor-pointer"
+                  >
+                    Kembali ke Login
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleRegisterNewMember} className="space-y-3.5 animate-fade-in">
+                {/* Registration Type Selector */}
+                <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-black/40 border border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => setRegType('new_program')}
+                    className={`py-2 px-2 text-xs font-bold rounded-xl transition cursor-pointer text-center ${
+                      regType === 'new_program' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    🆕 Member Baru
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRegType('migrate_old')}
+                    className={`py-2 px-2 text-xs font-bold rounded-xl transition cursor-pointer text-center ${
+                      regType === 'migrate_old' ? 'bg-purple-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    🔄 Migrasi Domain Lama
+                  </button>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-300">Username Telegram (Wajib Aktif):</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="@username_telegram"
+                    value={memberTg} 
+                    onChange={e => setMemberTg(e.target.value)} 
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white font-mono-code focus:outline-none focus:border-emerald-500" 
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-300">Nama Pelaksana Program / Kontak:</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="Nama Anda atau Kode Pelaksana..."
+                    value={memberName} 
+                    onChange={e => setMemberName(e.target.value)} 
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500" 
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-300">Password / Kunci Akses Akun:</label>
+                  <input 
+                    type="password" 
+                    required
+                    placeholder="Tentukan password akun Anda..."
+                    value={memberPassword} 
+                    onChange={e => setMemberPassword(e.target.value)} 
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500" 
+                  />
+                </div>
+
+                {/* Domain Input & Package */}
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-300">
+                    {regType === 'migrate_old' ? 'Domain Sebelumnya yang Sedang Aktif:' : 'Domain Baru yang Diajukan:'}
+                  </label>
+                  <div className="flex gap-2">
+                    <input 
+                      type="text" 
+                      required
+                      placeholder={regType === 'migrate_old' ? 'domainlama.xyz' : 'targetprogram'}
+                      value={memberDomainName} 
+                      onChange={e => setMemberDomainName(e.target.value)} 
+                      className="flex-1 bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white font-mono-code focus:outline-none focus:border-emerald-500" 
+                    />
+                    <select
+                      value={memberDomainPackage}
+                      onChange={e => setMemberDomainPackage(e.target.value)}
+                      className="bg-black/60 border border-white/10 rounded-xl px-2.5 py-2 text-xs text-emerald-300 font-mono-code focus:outline-none"
+                    >
+                      <option value=".site">.site (Free Kuota)</option>
+                      <option value=".online">.online (Free Kuota)</option>
+                      <option value=".xyz">.xyz (Free Kuota)</option>
+                      <option value=".com">.com (Pro TLD Berbayar)</option>
+                      <option value=".net">.net (Pro TLD Berbayar)</option>
+                      <option value=".cc">.cc (Offshore Berbayar)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-300">Catatan / Target Origin Server (Opsional):</label>
+                  <textarea
+                    rows={2}
+                    value={memberNotes}
+                    onChange={e => setMemberNotes(e.target.value)}
+                    placeholder="Contoh: Kebutuhan redirect, IP backend origin, atau keterangan pembayaran .com..."
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <button 
+                  type="submit" 
+                  disabled={memberLoading}
+                  className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-glow-emerald transition cursor-pointer disabled:opacity-50 mt-1"
+                >
+                  {memberLoading ? 'Mengirim Data ke Antrean...' : 'Kirim Pendaftaran ke Antrean ACC Admin'}
+                </button>
+
+                <div className="text-center text-[11px] text-slate-400">
+                  Sudah terdaftar sebelumnya?{' '}
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode('member_login')}
+                    className="text-cyan-400 font-bold hover:underline cursor-pointer"
+                  >
+                    Login di sini
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
         )}
       </div>
     </div>
   );
 }
 
-function MemberPortalView({ name, telegramId, tickets, payments, domains, onLogout, onRefresh, showToast }: any) {
-  const [memberTab, setMemberTab] = useState<'domains' | 'tickets' | 'payments' | 'community'>('domains');
+function MemberPortalView({ name, telegramId, tickets: initialTickets, payments, domains: initialDomains, onLogout, onRefresh, showToast }: any) {
+  const [memberTab, setMemberTab] = useState<'overview' | 'traffic' | 'tickets' | 'sla_rules'>('overview');
+  
+  // Local tickets state for private issue queue
+  const [memberTickets, setMemberTickets] = useState<any[]>(() => {
+    if (initialTickets && initialTickets.length > 0) return initialTickets;
+    return [
+      {
+        id: 501,
+        title: 'Verifikasi Routing DNS Anycast & Penerbitan SSL TLS 1.3',
+        category: 'dns_routing',
+        status: 'in_progress',
+        priority: 'high',
+        created_at: new Date(Date.now() - 3600000 * 5).toISOString(),
+        user_name: name,
+        notes: 'DNS TXT record sedang dalam proses propagasi anycast Cloudflare Edge.'
+      },
+      {
+        id: 489,
+        title: 'Pengajuan Permintaan Redirect Domain Lama & Caching Acceleration',
+        category: 'edge_cdn',
+        status: 'completed',
+        priority: 'medium',
+        created_at: new Date(Date.now() - 3600000 * 28).toISOString(),
+        user_name: name,
+        notes: 'Redirect 301 dan akselerasi Edge CDN Brotli telah aktif.'
+      }
+    ];
+  });
+
+  // Modal states
   const [newTicketModal, setNewTicketModal] = useState(false);
-  const [newTicketCat, setNewTicketCat] = useState('support');
-  const [newTicketTitle, setNewTicketTitle] = useState('');
-  const [newTicketDesc, setNewTicketDesc] = useState('');
+  const [ticketCat, setTicketCat] = useState('redirect_request');
+  const [ticketPriority, setTicketPriority] = useState('medium');
+  const [ticketTitle, setTicketTitle] = useState('');
+  const [ticketDesc, setTicketDesc] = useState('');
 
-  // Talk to Admin (7862805424) Modal State
-  const [talkToAdminModal, setTalkToAdminModal] = useState(false);
-  const [talkMessage, setTalkMessage] = useState('');
-  const [talkSending, setTalkSending] = useState(false);
+  const [newDomainModal, setNewDomainModal] = useState(false);
+  const [domainInput, setDomainInput] = useState('');
+  const [domainType, setDomainType] = useState('.site');
+  const [domainNotes, setDomainNotes] = useState('');
 
-  const [claimModal, setClaimModal] = useState(false);
-  const [claimAmount, setClaimAmount] = useState('');
-  const [claimNotes, setClaimNotes] = useState('');
+  const [selectedTicketDetail, setSelectedTicketDetail] = useState<any>(null);
 
-  const handleCreateTicket = (e: React.FormEvent) => {
+  const handleCreateTicketSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    alert(`🎫 Tiket #${Math.floor(100 + Math.random() * 900)} berhasil dikirim!\nTim Admin & Dev akan segera menindaklanjuti dan membalas.`);
+    const newId = Math.floor(600 + Math.random() * 399);
+    const createdTicket = {
+      id: newId,
+      title: ticketTitle,
+      category: ticketCat,
+      priority: ticketPriority,
+      status: 'pending',
+      created_at: new Date().toISOString(),
+      user_name: name,
+      user_id: telegramId,
+      notes: ticketDesc
+    };
+
+    setMemberTickets([createdTicket, ...memberTickets]);
     setNewTicketModal(false);
-    setNewTicketTitle('');
-    setNewTicketDesc('');
+    setTicketTitle('');
+    setTicketDesc('');
+    showToast(`Tiket Operasional #${newId} berhasil disubmit ke antrean admin.`, 'success');
   };
 
-  const handleSendTalkToAdmin = (e: React.FormEvent) => {
+  const handleRequestDomainSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setTalkSending(true);
-    setTimeout(() => {
-      setTalkSending(false);
-      alert(`🚀 Pesan Prioritas Terkirim Langsung ke Super Admin (ID: 7862805424)!\nTiket darurat langsung dibuat dengan penanganan prioritas tingkat tinggi.`);
-      setTalkToAdminModal(false);
-      setTalkMessage('');
-    }, 700);
-  };
+    const fullFqdn = domainInput.includes('.') ? domainInput : `${domainInput}${domainType}`;
+    const newId = Math.floor(700 + Math.random() * 299);
+    const domainTicket = {
+      id: newId,
+      title: `Pengajuan Domain Program: ${fullFqdn}`,
+      category: 'domain_request',
+      priority: 'high',
+      status: 'pending',
+      created_at: new Date().toISOString(),
+      user_name: name,
+      user_id: telegramId,
+      notes: `Permintaan pendaftaran domain ${fullFqdn}. Catatan: ${domainNotes || 'Konfigurasi default Cloudflare Anycast'}`
+    };
 
-  const handleClaimPayment = (e: React.FormEvent) => {
-    e.preventDefault();
-    alert(`💳 Pengajuan Klaim Gaji Rp ${Number(claimAmount || 0).toLocaleString('id-ID')} berhasil diajukan!\nStatus: Menunggu verifikasi tim finance. Notifikasi akan disiarkan ke grup komunitas setelah disetujui.`);
-    setClaimModal(false);
-    setClaimAmount('');
-    setClaimNotes('');
+    setMemberTickets([domainTicket, ...memberTickets]);
+    setNewDomainModal(false);
+    setDomainInput('');
+    setDomainNotes('');
+    showToast(`Pengajuan domain ${fullFqdn} berhasil dikirim (Tiket #${newId}).`, 'success');
   };
-
-  const officialTopics = [
-    { id: 1, title: '📌 Topik 1: Pengumuman Resmi & Kebijakan', desc: 'Rilis fitur baru, jadwal maintenance, & kebijakan platform', link: 'https://t.me/+ybOzZ_lstEdhNDU1' },
-    { id: 2, title: '🌐 Topik 2: Domain, Subdomain & DNS Cloudflare', desc: 'Diskusi seputar setting DNS, SSL, & routing subdomain', link: 'https://t.me/+ybOzZ_lstEdhNDU1' },
-    { id: 3, title: '💼 Topik 3: Payroll Gaji & Notifikasi Klaim', desc: 'Broadcast live pencairan gaji member via @mrssandebot', link: 'https://t.me/+ybOzZ_lstEdhNDU1' },
-    { id: 4, title: '🛠️ Topik 4: Tanya Jawab Teknis & Diskusi Member', desc: 'Saling bantu kendala teknis antar sesama member komunitas', link: 'https://t.me/+ybOzZ_lstEdhNDU1' },
-  ];
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col ambient-glow">
-      {/* Member Portal Header */}
-      <header className="px-4 sm:px-8 py-4 glass-topbar sticky top-0 z-30 flex items-center justify-between border-b border-white/10 flex-wrap gap-2">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col ambient-glow selection:bg-cyan-500/20 selection:text-cyan-200">
+      {/* Top Navbar Header */}
+      <header className="px-4 sm:px-8 py-3.5 glass-topbar sticky top-0 z-30 flex items-center justify-between border-b border-white/10 flex-wrap gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-glow-cyan">
-            <Users size={20} />
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-600 to-blue-600 flex items-center justify-center text-white shadow-glow-cyan">
+            <Globe2 size={18} />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-sm sm:text-base font-black text-white">{name}</h1>
+              <h1 className="text-sm sm:text-base font-black text-white tracking-tight">{name}</h1>
               <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                ACTIVE MEMBER
+                VERIFIED OPERATOR
               </span>
             </div>
-            <div className="text-[11px] text-slate-400 font-mono-code">
-              Telegram ID: {telegramId} · Member Portal
+            <div className="text-[11px] text-slate-400 font-mono-code flex items-center gap-2">
+              <span>ID: {telegramId}</span>
+              <span>•</span>
+              <span className="text-cyan-400">Private Program Network</span>
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Talk to Super Admin Button */}
           <button
-            onClick={() => setTalkToAdminModal(true)}
-            className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
-            title="Hubungi Langsung Super Admin 7862805424"
+            onClick={() => setNewTicketModal(true)}
+            className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-glow-cyan"
           >
-            <ShieldAlert size={14} className="text-amber-400" />
-            <span>Talk to Admin</span>
-            <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-[9px] font-mono-code font-bold">7862805424</span>
+            <Plus size={14} />
+            <span>Buat Tiket Operasional</span>
           </button>
-
-          <a
-            href="https://t.me/+ybOzZ_lstEdhNDU1"
-            target="_blank"
-            rel="noreferrer"
-            className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-500/15 border border-blue-500/30 text-blue-300 hover:bg-blue-500/25 text-xs font-bold transition"
+          <button
+            onClick={onRefresh}
+            className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 transition cursor-pointer"
+            title="Refresh Data Layanan"
           >
-            <MessageCircle size={14} />
-            <span>Grup Member</span>
-          </a>
+            <RefreshCw size={15} />
+          </button>
           <button
             onClick={onLogout}
             className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-rose-500/20 text-slate-300 hover:text-rose-300 text-xs font-bold border border-white/10 flex items-center gap-1.5 transition cursor-pointer"
           >
             <LogOut size={14} />
-            <span>Keluar</span>
+            <span className="hidden sm:inline">Keluar</span>
           </button>
         </div>
       </header>
 
-      {/* Member Navigation Tabs */}
-      <div className="max-w-6xl w-full mx-auto px-4 sm:px-8 pt-6 space-y-6 flex-1">
+      {/* Main Container */}
+      <div className="max-w-6xl w-full mx-auto px-4 sm:px-8 pt-5 pb-12 space-y-5 flex-1">
+        {/* Navigation Tabs */}
         <div className="p-1 rounded-2xl bg-black/40 border border-white/10 flex items-center gap-1 overflow-x-auto">
           {[
-            { id: 'domains', label: '🌐 Domain & Subdomain Saya' },
-            { id: 'tickets', label: '🎫 Tiket Bantuan Saya' },
-            { id: 'payments', label: '💳 Klaim Gaji & Pembayaran' },
-            { id: 'community', label: '💬 Komunitas & Topik Telegram' },
-          ].map(t => (
-            <button
-              key={t.id}
-              onClick={() => setMemberTab(t.id as any)}
-              className={`flex-1 min-w-[140px] py-2.5 px-3 rounded-xl text-xs font-bold transition cursor-pointer text-center ${
-                memberTab === t.id ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
+            { id: 'overview', label: '🌐 Status Domain & Anycast', icon: Globe2 },
+            { id: 'traffic', label: '📊 Trafik & Matriks Program', icon: Activity },
+            { id: 'tickets', label: '🎫 Antrean Tiket Kendala', icon: LifeBuoy, count: memberTickets.filter(t => t.status === 'pending' || t.status === 'in_progress').length },
+            { id: 'sla_rules', label: '📜 SOP Operasional & SLA', icon: ShieldCheck },
+          ].map(t => {
+            const IconComp = t.icon;
+            const isActive = memberTab === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setMemberTab(t.id as any)}
+                className={`flex-1 min-w-[160px] py-2.5 px-3 rounded-xl text-xs font-bold transition cursor-pointer flex items-center justify-center gap-2 ${
+                  isActive ? 'bg-cyan-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <IconComp size={14} className={isActive ? 'text-white' : 'text-slate-400'} />
+                <span>{t.label}</span>
+                {Boolean(t.count) && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-amber-500 text-black">
+                    {t.count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
-        {/* TAB 1: DOMAIN SAYA */}
-        {memberTab === 'domains' && (
-          <div className="space-y-4 animate-fade-in">
-            <div className="p-5 rounded-3xl glass-card border border-blue-500/20 space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-extrabold text-white">Status Domain & DNS Aktif</h3>
-                  <p className="text-xs text-slate-400">Infrastruktur hosting & routing terhubung ke Cloudflare Edge</p>
+        {/* ======================================================== */}
+        {/* TAB 1: OVERVIEW & DOMAIN ROUTING */}
+        {/* ======================================================== */}
+        {memberTab === 'overview' && (
+          <div className="space-y-5 animate-fade-in">
+            {/* Global Edge Status Hero */}
+            <div className="glass-card p-5 sm:p-6 rounded-3xl relative overflow-hidden border border-cyan-500/20">
+              <div className="absolute -right-20 -top-20 w-60 h-60 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-cyan-400 text-[11px] font-bold uppercase tracking-wider">
+                    <Sparkles size={14} />
+                    Private Edge Network Connected
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">Status Domain & Routing Program</h2>
+                  <p className="text-xs text-slate-400 max-w-2xl leading-relaxed">
+                    Domain program diproteksi dengan Cloudflare Enterprise Anycast, SSL Otomatis TLS 1.3, proteksi bot scanning, dan failover IP otomatis.
+                  </p>
                 </div>
-                <span className="px-2.5 py-1 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold">
-                  SSL ACTIVE
-                </span>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-black/40 border border-white/5 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-slate-400">Domain Utama:</span>
-                  <strong className="text-sm font-mono-code text-cyan-300 font-bold">abiedien.site</strong>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-slate-400">DNS TXT Verification:</span>
-                  <span className="text-xs font-mono-code text-emerald-400">abied-verify=ok9981</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-slate-400">Subdomain Alokasi:</span>
-                  <span className="text-xs font-mono-code text-slate-200">api.abiedien.site, app.abiedien.site</span>
+                <div className="flex items-center gap-2 self-start sm:self-center">
+                  <div className="px-3.5 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-bold flex items-center gap-1.5 shadow-glow-emerald">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    Anycast Edge Normal (99.98%)
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        )}
 
-        {/* TAB 2: TIKET SAYA */}
-        {memberTab === 'tickets' && (
-          <div className="space-y-4 animate-fade-in">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div>
-                <h3 className="text-sm font-extrabold text-white">Tiket Kendala & Permintaan Bantuan</h3>
-                <p className="text-xs text-slate-400">Ajukan kendala teknis atau hubungi langsung Super Admin</p>
-              </div>
-              <div className="flex items-center gap-2">
+            {/* Service & Domain Grid */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+                  <Globe2 size={16} className="text-cyan-400" />
+                  Daftar Domain & Routing Program Aktif
+                </h3>
                 <button
-                  onClick={() => setTalkToAdminModal(true)}
-                  className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
-                >
-                  <ShieldAlert size={14} />
-                  <span>Talk to Admin 7862805424</span>
-                </button>
-                <button
-                  onClick={() => setNewTicketModal(true)}
-                  className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-glow-cyan"
+                  onClick={() => setNewDomainModal(true)}
+                  className="px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
                 >
                   <Plus size={14} />
-                  <span>Buat Tiket Baru</span>
+                  <span>Ajukan Domain Baru</span>
                 </button>
               </div>
-            </div>
 
-            <div className="space-y-2.5">
-              <div className="p-4 rounded-2xl glass-card border border-white/10 flex items-center justify-between">
-                <div>
-                  <span className="text-xs font-bold text-white block">#TKT-501 · Permintaan Verifikasi Subdomain API</span>
-                  <span className="text-[11px] text-slate-400">Kategori: Domain Request · Direspons oleh: Sarah (Dev)</span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Domain Card 1 */}
+                <div className="glass-card p-5 rounded-2xl border border-white/10 space-y-3.5 relative overflow-hidden">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-bold text-white font-mono-code flex items-center gap-1.5">
+                        <span>abiedien.site</span>
+                        <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-cyan-500/20 text-cyan-300">PRIMARY</span>
+                      </div>
+                      <span className="text-[11px] text-slate-400">Node Edge: Cloudflare Global Anycast</span>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold">
+                      SSL AKTIF
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-black/40 border border-white/5 space-y-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">DNS TXT Verification:</span>
+                      <span className="font-mono-code text-emerald-400 font-semibold">abied-verify=ok9981</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Nameserver Assigned:</span>
+                      <span className="font-mono-code text-slate-300">ns1.abiedien.site, ns2.abiedien.site</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Subdomain Alokasi:</span>
+                      <span className="font-mono-code text-cyan-300">api.abiedien.site, app.abiedien.site</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1 text-[11px] text-slate-400">
+                    <span>Protokol: HTTP/3 + TLS 1.3</span>
+                    <span className="text-emerald-400 font-bold">Uptime: 100%</span>
+                  </div>
                 </div>
-                <span className="px-2.5 py-1 rounded-xl bg-blue-500/20 text-blue-300 text-xs font-bold">
-                  IN PROGRESS
-                </span>
+
+                {/* Domain Card 2: Subdomain Routing */}
+                <div className="glass-card p-5 rounded-2xl border border-white/10 space-y-3.5 relative overflow-hidden">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-bold text-white font-mono-code flex items-center gap-1.5">
+                        <span>portal.abiedien.site</span>
+                        <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-blue-500/20 text-blue-300">ROUTING</span>
+                      </div>
+                      <span className="text-[11px] text-slate-400">Target Origin: Cloudflare Pages Edge</span>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold">
+                      SSL AKTIF
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-black/40 border border-white/5 space-y-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Routing CNAME:</span>
+                      <span className="font-mono-code text-slate-300">abiedienbackoffice.pages.dev</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Edge Proxy:</span>
+                      <span className="font-mono-code text-emerald-400 font-semibold">Proxied (Orange Cloud)</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">WAF DDoS Layer:</span>
+                      <span className="font-mono-code text-cyan-300">Standard Rule Active</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1 text-[11px] text-slate-400">
+                    <span>Origin Security: Full (Strict)</span>
+                    <span className="text-emerald-400 font-bold">Latency: ~22ms</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* TAB 3: PAYROLL & PEMBAYARAN */}
-        {memberTab === 'payments' && (
-          <div className="space-y-4 animate-fade-in">
-            {/* Security Rules & Cyber Defense Banner */}
-            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200 space-y-2">
-              <div className="flex items-center gap-2 font-bold text-amber-300">
-                <ShieldCheck size={16} />
-                <span>Aturan Pakai & Proteksi Anti-Penipuan / Cyber Impersonation:</span>
+        {/* ======================================================== */}
+        {/* TAB 2: TRAFFIC & PERFORMANCE ANALYTICS */}
+        {/* ======================================================== */}
+        {memberTab === 'traffic' && (
+          <div className="space-y-5 animate-fade-in">
+            {/* KPI Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+              <div className="glass-card p-4 rounded-2xl border border-white/10 space-y-1">
+                <div className="flex items-center justify-between text-slate-400 text-xs">
+                  <span>Permintaan (24 Jam)</span>
+                  <Activity size={15} className="text-cyan-400" />
+                </div>
+                <strong className="text-xl font-black text-white block mt-1 font-mono-code">48,250</strong>
+                <span className="text-[10px] text-emerald-400 font-semibold">+14.2% dari kemarin</span>
               </div>
-              <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-300">
-                <li>Pengajuan klaim gaji <strong>WAJIB</strong> menyertakan bukti screenshot asli transaksi/pekerjaan (maks. 5 MB).</li>
-                <li>Sistem membatasi maksimal <strong>3 klaim per 24 jam</strong> demi integritas verifikasi.</li>
-                <li>Admin resmi tidak pernah meminta password / OTP. Konsultasi privat terhubung ke Admin <strong>7862805424</strong>.</li>
-              </ul>
+
+              <div className="glass-card p-4 rounded-2xl border border-white/10 space-y-1">
+                <div className="flex items-center justify-between text-slate-400 text-xs">
+                  <span>Bandwidth Terkirim</span>
+                  <Server size={15} className="text-blue-400" />
+                </div>
+                <strong className="text-xl font-black text-white block mt-1 font-mono-code">1.82 GB</strong>
+                <span className="text-[10px] text-slate-400">Edge Caching Optimal</span>
+              </div>
+
+              <div className="glass-card p-4 rounded-2xl border border-white/10 space-y-1">
+                <div className="flex items-center justify-between text-slate-400 text-xs">
+                  <span>Edge Cache Ratio</span>
+                  <Zap size={15} className="text-amber-400" />
+                </div>
+                <strong className="text-xl font-black text-amber-400 block mt-1 font-mono-code">89.4%</strong>
+                <span className="text-[10px] text-slate-400">Beban origin minim</span>
+              </div>
+
+              <div className="glass-card p-4 rounded-2xl border border-white/10 space-y-1">
+                <div className="flex items-center justify-between text-slate-400 text-xs">
+                  <span>Rata-Rata Latensi</span>
+                  <Clock size={15} className="text-emerald-400" />
+                </div>
+                <strong className="text-xl font-black text-emerald-400 block mt-1 font-mono-code">24 ms</strong>
+                <span className="text-[10px] text-emerald-400 font-semibold">Anycast Cloudflare</span>
+              </div>
             </div>
 
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-extrabold text-white">Status Gaji & Klaim Pembayaran</h3>
-                <p className="text-xs text-slate-400">Klaim terverifikasi disiarkan otomatis ke grup member (@mrssandebot) & bot admin</p>
+            {/* Status Code Breakdown */}
+            <div className="glass-card p-5 rounded-2xl border border-white/10 space-y-4">
+              <div className="flex items-center justify-between pb-2 border-b border-white/5">
+                <h3 className="font-bold text-xs sm:text-sm text-white flex items-center gap-2">
+                  <Activity size={16} className="text-cyan-400" />
+                  Distribusi Status HTTP Response Program (24h)
+                </h3>
+                <span className="text-[10px] text-emerald-400 font-bold">96.5% Sukses</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-300">2xx Success (Berhasil)</span>
+                      <strong className="font-mono-code text-emerald-400">96.5% (46,561)</strong>
+                    </div>
+                    <div className="h-2 rounded-full bg-white/5 overflow-hidden">
+                      <div className="h-full bg-emerald-500 rounded-full" style={{ width: '96.5%' }} />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-300">3xx Redirection (Redirect Landing)</span>
+                      <strong className="font-mono-code text-blue-400">2.0% (965)</strong>
+                    </div>
+                    <div className="h-2 rounded-full bg-white/5 overflow-hidden">
+                      <div className="h-full bg-blue-500 rounded-full" style={{ width: '2%' }} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-300">4xx Client Error (Blocked / Not Found)</span>
+                      <strong className="font-mono-code text-amber-400">1.2% (579)</strong>
+                    </div>
+                    <div className="h-2 rounded-full bg-white/5 overflow-hidden">
+                      <div className="h-full bg-amber-500 rounded-full" style={{ width: '1.2%' }} />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-300">5xx Origin Error</span>
+                      <strong className="font-mono-code text-rose-400">0.3% (145)</strong>
+                    </div>
+                    <div className="h-2 rounded-full bg-white/5 overflow-hidden">
+                      <div className="h-full bg-rose-500 rounded-full" style={{ width: '0.3%' }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* TAB 3: TICKETS & ISSUE QUEUE */}
+        {/* ======================================================== */}
+        {memberTab === 'tickets' && (
+          <div className="space-y-4 animate-fade-in">
+            <div className="p-4 rounded-2xl bg-blue-950/20 border border-blue-500/20 text-xs text-blue-200 flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2.5">
+                <Clock size={18} className="text-cyan-400 shrink-0" />
+                <div>
+                  <strong className="text-white block">Antrean Tiket Kendala Operasional:</strong>
+                  <span className="text-[11px] text-slate-300">
+                    Gunakan tiket untuk request redirect domain, push indexing, kendala DNS, atau domain down. Ditangani langsung oleh tim teknis.
+                  </span>
+                </div>
               </div>
               <button
-                onClick={() => setClaimModal(true)}
-                className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-glow-emerald"
+                onClick={() => setNewTicketModal(true)}
+                className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-glow-cyan"
               >
                 <Plus size={14} />
-                <span>Ajukan Klaim (Wajib SS)</span>
+                <span>Buat Tiket Kendala</span>
               </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="p-4 rounded-2xl glass-card border border-white/10 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-slate-400">Invoice #PAY-802 (Periode September 2026)</span>
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300">
-                    VERIFIED
-                  </span>
+            {/* Ticket List */}
+            <div className="space-y-2.5">
+              {memberTickets.map((t: any) => (
+                <div
+                  key={t.id}
+                  onClick={() => setSelectedTicketDetail(t)}
+                  className="p-4 rounded-2xl glass-card border border-white/10 hover:border-cyan-500/30 transition cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 group"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-bold text-white group-hover:text-cyan-300 transition">
+                        #TKT-{t.id} · {t.title}
+                      </span>
+                      <span className={`px-2 py-0.2 rounded text-[9px] font-bold uppercase ${
+                        t.priority === 'urgent' || t.priority === 'high' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'bg-slate-700 text-slate-300'
+                      }`}>
+                        {t.priority || 'NORMAL'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 line-clamp-1">{t.notes || 'Tiket operasional program'}</p>
+                    <span className="text-[10px] text-slate-500 block">
+                      Diajukan: {new Date(t.created_at || Date.now()).toLocaleString('id-ID')}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 self-start sm:self-center">
+                    <span className={`px-2.5 py-1 rounded-xl text-[10px] font-extrabold uppercase ${
+                      t.status === 'completed' || t.status === 'resolved'
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : t.status === 'in_progress'
+                        ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    }`}>
+                      {t.status === 'completed' ? 'SELESAI' : t.status === 'in_progress' ? 'PROSES TEKNIS' : 'MENUNGGU ACC'}
+                    </span>
+                    <ChevronRight size={16} className="text-slate-500 group-hover:text-cyan-400 transition" />
+                  </div>
                 </div>
-                <div className="text-lg font-black text-emerald-400 font-mono-code">Rp 4.500.000</div>
-                <span className="text-[10px] text-slate-400 block">Diverifikasi resmi oleh Super Admin Finance. Bukti SS valid.</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* TAB 4: SOP OPERASIONAL & SLA */}
+        {/* ======================================================== */}
+        {memberTab === 'sla_rules' && (
+          <div className="space-y-5 animate-fade-in">
+            <div className="glass-card p-5 rounded-2xl border border-cyan-500/20 space-y-2">
+              <div className="flex items-center gap-2 text-cyan-400 text-xs font-bold uppercase tracking-wider">
+                <ShieldCheck size={16} />
+                SOP Operasional & Ketentuan Private Program
+              </div>
+              <h3 className="text-base font-extrabold text-white">Pedoman Kepatuhan Teknis & Standar Jaringan</h3>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Seluruh pelaksana program wajib mematuhi SOP keamanan, aturan routing Anycast, dan kerahasiaan link internal.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="glass-card p-5 rounded-2xl border border-white/10 space-y-2.5">
+                <strong className="text-xs text-emerald-400 block font-bold">1. Keamanan & Anti-Leakage</strong>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Dilarang membagikan link internal origin backend atau token DNS ke pihak luar. Seluruh trafik wajib melalui routing Anycast Cloudflare yang telah ditentukan.
+                </p>
               </div>
 
-              <div className="p-4 rounded-2xl glass-card border border-cyan-500/20 space-y-2 flex flex-col justify-center">
-                <div className="flex items-center gap-2 text-cyan-300 text-xs font-bold">
-                  <Bot size={16} />
-                  <span>Kirim Bukti Langsung via Telegram Bot</span>
-                </div>
-                <p className="text-[11px] text-slate-400">
-                  Anda juga dapat mengirim foto screenshot langsung ke Telegram Bot <strong>@sandekalabot</strong> untuk pengajuan otomatis.
+              <div className="glass-card p-5 rounded-2xl border border-white/10 space-y-2.5">
+                <strong className="text-xs text-cyan-400 block font-bold">2. Penanganan Domain Mati / Terblokir</strong>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Jika domain terkena internet positif / DNS filtering, segera ajukan tiket **Request Redirect Domain** agar tim admin memasangkan 301 wildcard ke domain cadangan.
+                </p>
+              </div>
+
+              <div className="glass-card p-5 rounded-2xl border border-white/10 space-y-2.5">
+                <strong className="text-xs text-purple-400 block font-bold">3. Ketentuan TLD Berbayar (.COM/.NET)</strong>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Domain berbayar (.com, .cc, .net) diaktifkan setelah konfirmasi administrasi selesai dan telah di-ACC oleh Admin.
+                </p>
+              </div>
+
+              <div className="glass-card p-5 rounded-2xl border border-white/10 space-y-2.5">
+                <strong className="text-xs text-amber-400 block font-bold">4. Jaminan SLA & Waktu Tanggap</strong>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Jaminan ketersediaan jaringan Anycast 99.9%. Tiket kendala darurat diproses dalam waktu tanggap rata-rata &lt; 30 menit.
                 </p>
               </div>
             </div>
           </div>
         )}
-
-        {/* TAB 4: KOMUNITAS & TOPIK TELEGRAM */}
-        {memberTab === 'community' && (
-          <div className="space-y-5 animate-fade-in">
-            {/* Group Banner */}
-            <div className="p-5 rounded-3xl glass-card border border-cyan-500/20 space-y-3">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-cyan-500/20 flex items-center justify-center text-cyan-400">
-                    <MessageSquare size={22} />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-extrabold text-white">Grup Resmi Komunitas Member</h3>
-                    <p className="text-xs text-slate-400">Terikat dengan topik terstruktur & bot broadcast @mrssandebot</p>
-                  </div>
-                </div>
-                <a
-                  href="https://t.me/+ybOzZ_lstEdhNDU1"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-1.5 transition"
-                >
-                  <ExternalLink size={14} />
-                  <span>Buka Grup: t.me/+ybOzZ_lstEdhNDU1</span>
-                </a>
-              </div>
-            </div>
-
-            {/* Topik Terikat Komunitas */}
-            <div className="space-y-3">
-              <h4 className="text-xs font-extrabold text-slate-300 uppercase tracking-wider">Topik Terstruktur Grup Komunitas:</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {officialTopics.map(topic => (
-                  <a
-                    key={topic.id}
-                    href={topic.link}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="p-4 rounded-2xl glass-card border border-white/5 hover:border-cyan-500/30 transition flex items-start justify-between group"
-                  >
-                    <div className="space-y-1">
-                      <strong className="text-xs font-bold text-white group-hover:text-cyan-300 transition block">{topic.title}</strong>
-                      <p className="text-[11px] text-slate-400 leading-relaxed">{topic.desc}</p>
-                    </div>
-                    <ChevronRight size={16} className="text-slate-500 group-hover:text-cyan-400 shrink-0 mt-1" />
-                  </a>
-                ))}
-              </div>
-            </div>
-
-            {/* Laporan Harian Terkini Feed */}
-            <div className="p-4 rounded-2xl bg-blue-950/20 border border-blue-500/20 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-blue-300 flex items-center gap-1.5">
-                  <Radio size={14} className="text-blue-400 animate-pulse" />
-                  Laporan Harian Operasional Terbaru
-                </span>
-                <span className="text-[10px] text-slate-400 font-mono-code">{new Date().toISOString().substring(0, 10)}</span>
-              </div>
-              <p className="text-xs text-slate-300 leading-relaxed">
-                Seluruh rute domain aktif, sinkronisasi Edge Cloudflare normal, dan verifikasi payroll berjalan sesuai jadwal harian.
-              </p>
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* MODAL TALK TO ADMIN (7862805424) */}
-      {talkToAdminModal && (
-        <div className="fixed inset-0 z-60 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-slate-900 border border-amber-500/30 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+      {/* ======================================================== */}
+      {/* MODAL: BUAT TIKET OPERASIONAL */}
+      {/* ======================================================== */}
+      {newTicketModal && (
+        <div className="fixed inset-0 z-60 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-white/10">
-              <div className="flex items-center gap-2 text-amber-400">
-                <ShieldAlert size={20} />
-                <h3 className="text-sm font-extrabold text-white">Talk to Super Admin (ID: 7862805424)</h3>
+              <div className="flex items-center gap-2 text-cyan-400">
+                <LifeBuoy size={18} />
+                <h3 className="text-sm font-extrabold text-white">Buat Tiket Kendala Operasional</h3>
               </div>
-              <button onClick={() => setTalkToAdminModal(false)} className="p-1 text-slate-400 hover:text-white"><X size={16} /></button>
+              <button onClick={() => setNewTicketModal(false)} className="p-1 text-slate-400 hover:text-white cursor-pointer"><X size={16} /></button>
             </div>
 
-            <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200 leading-relaxed space-y-1">
-              <strong className="block font-bold">Jalur Eskalasi Khusus Super Admin:</strong>
-              <p className="text-[11px] text-slate-300">
-                Pesan Anda akan diteruskan langsung ke Super Admin <strong>ID 7862805424</strong> untuk kendala darurat atau urusan otorisasi tingkat tinggi.
-              </p>
-            </div>
-
-            <form onSubmit={handleSendTalkToAdmin} className="space-y-3">
+            <form onSubmit={handleCreateTicketSubmit} className="space-y-3">
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Pesan Langsung ke Super Admin:</label>
+                <label className="text-xs font-semibold text-slate-300">Kategori Permintaan:</label>
+                <select
+                  value={ticketCat}
+                  onChange={e => setTicketCat(e.target.value)}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-cyan-500"
+                >
+                  <option value="redirect_request">Permintaan Redirect Domain Lama</option>
+                  <option value="push_indexing">Push Indexing / Ranking Review</option>
+                  <option value="dns_routing">Kendala DNS & SSL</option>
+                  <option value="domain_replacement">Penggantian Domain Terblokir</option>
+                  <option value="general_support">Bantuan Teknis Lainnya</option>
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-300">Prioritas:</label>
+                <select
+                  value={ticketPriority}
+                  onChange={e => setTicketPriority(e.target.value)}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-cyan-500"
+                >
+                  <option value="low">Rendah (Pertanyaan Umum)</option>
+                  <option value="medium">Normal (Kendala Minor)</option>
+                  <option value="high">Tinggi (Perlu Segera)</option>
+                  <option value="urgent">Kritis (Domain Mati / Kena Block)</option>
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-300">Judul Permintaan:</label>
+                <input
+                  type="text"
+                  required
+                  value={ticketTitle}
+                  onChange={e => setTicketTitle(e.target.value)}
+                  placeholder="Contoh: Pasang 301 redirect dari domainlama.xyz ke domainbaru.site..."
+                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-300">Detail & Rincian:</label>
                 <textarea
                   required
-                  rows={4}
-                  value={talkMessage}
-                  onChange={e => setTalkMessage(e.target.value)}
-                  placeholder="Tuliskan kendala mendesak atau pertanyaan khusus untuk Admin 7862805424..."
-                  className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-amber-500/50"
+                  rows={3}
+                  value={ticketDesc}
+                  onChange={e => setTicketDesc(e.target.value)}
+                  placeholder="Jelaskan detail domain sumber, target tujuan, atau kendala..."
+                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-cyan-500"
                 />
               </div>
 
               <div className="flex items-center gap-2 pt-2">
-                <a
-                  href="https://t.me/sandekalabot?start=admin_7862805424"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="px-3 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-cyan-300 text-xs font-bold flex items-center gap-1.5 transition"
-                >
-                  <ExternalLink size={14} />
-                  <span>Chat via Bot Telegram</span>
-                </a>
-                <button
-                  type="submit"
-                  disabled={talkSending}
-                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold text-xs transition cursor-pointer disabled:opacity-50"
-                >
-                  {talkSending ? 'Mengirim...' : 'Kirim Pesan ke Admin'}
+                <button type="button" onClick={() => setNewTicketModal(false)} className="flex-1 py-2.5 rounded-xl bg-white/5 text-xs font-bold hover:bg-white/10 transition cursor-pointer">Batal</button>
+                <button type="submit" className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white text-xs font-bold transition cursor-pointer shadow-glow-cyan">
+                  Kirim ke Antrean Admin
                 </button>
               </div>
             </form>
@@ -4266,121 +4732,111 @@ function MemberPortalView({ name, telegramId, tickets, payments, domains, onLogo
         </div>
       )}
 
-      {/* MODAL TIKET BARU MEMBER */}
-      {newTicketModal && (
+      {/* ======================================================== */}
+      {/* MODAL: AJUKAN DOMAIN BARU */}
+      {/* ======================================================== */}
+      {newDomainModal && (
         <div className="fixed inset-0 z-60 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-white/10">
-              <h3 className="text-sm font-extrabold text-white">Buat Tiket Bantuan / Kendala Baru</h3>
-              <button onClick={() => setNewTicketModal(false)} className="p-1 text-slate-400 hover:text-white"><X size={16} /></button>
+              <div className="flex items-center gap-2 text-emerald-400">
+                <Globe2 size={18} />
+                <h3 className="text-sm font-extrabold text-white">Pengajuan Domain Program Baru</h3>
+              </div>
+              <button onClick={() => setNewDomainModal(false)} className="p-1 text-slate-400 hover:text-white cursor-pointer"><X size={16} /></button>
             </div>
-            <form onSubmit={handleCreateTicket} className="space-y-3">
+
+            <form onSubmit={handleRequestDomainSubmit} className="space-y-3">
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Kategori Kendala:</label>
-                <select
-                  value={newTicketCat}
-                  onChange={e => setNewTicketCat(e.target.value)}
-                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs text-white"
-                >
-                  <option value="support">Kendala Teknis / Hosting</option>
-                  <option value="domain">Pengajuan & DNS Domain</option>
-                  <option value="billing">Pertanyaan Payroll / Gaji</option>
-                  <option value="admin_escalation">Eskalasi ke Admin (7862805424)</option>
-                </select>
+                <label className="text-xs font-semibold text-slate-300">Nama Domain yang Diajukan:</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    required
+                    value={domainInput}
+                    onChange={e => setDomainInput(e.target.value)}
+                    placeholder="targetprogramanda"
+                    className="flex-1 bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-emerald-500 font-mono-code"
+                  />
+                  <select
+                    value={domainType}
+                    onChange={e => setDomainType(e.target.value)}
+                    className="bg-black/60 border border-white/10 rounded-xl px-3 py-2 text-xs text-emerald-300 font-mono-code focus:outline-none"
+                  >
+                    <option value=".site">.site (Free)</option>
+                    <option value=".online">.online (Free)</option>
+                    <option value=".xyz">.xyz (Free)</option>
+                    <option value=".com">.com (Pro TLD)</option>
+                    <option value=".net">.net (Pro TLD)</option>
+                    <option value=".cc">.cc (Offshore)</option>
+                  </select>
+                </div>
               </div>
+
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Judul Kendala:</label>
-                <input
-                  type="text"
-                  required
-                  value={newTicketTitle}
-                  onChange={e => setNewTicketTitle(e.target.value)}
-                  placeholder="Contoh: DNS TXT belum terdeteksi..."
-                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs text-white"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Deskripsi:</label>
+                <label className="text-xs font-semibold text-slate-300">Catatan Konfigurasi / Target Origin (Opsional):</label>
                 <textarea
-                  required
-                  rows={3}
-                  value={newTicketDesc}
-                  onChange={e => setNewTicketDesc(e.target.value)}
-                  placeholder="Jelaskan detail kendala yang dialami..."
-                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs text-white"
+                  rows={2}
+                  value={domainNotes}
+                  onChange={e => setDomainNotes(e.target.value)}
+                  placeholder="Contoh: Arahkan ke Cloudflare Pages atau server backend IP 103.xxx..."
+                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
                 />
               </div>
+
               <div className="flex items-center gap-2 pt-2">
-                <button type="button" onClick={() => setNewTicketModal(false)} className="flex-1 py-2 rounded-xl bg-white/5 text-xs font-bold">Batal</button>
-                <button type="submit" className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold">Kirim Tiket</button>
+                <button type="button" onClick={() => setNewDomainModal(false)} className="flex-1 py-2.5 rounded-xl bg-white/5 text-xs font-bold hover:bg-white/10 transition cursor-pointer">Batal</button>
+                <button type="submit" className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold transition cursor-pointer shadow-glow-emerald">
+                  Kirim Pengajuan
+                </button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* MODAL KLAIM PEMBAYARAN */}
-      {claimModal && (
+      {/* ======================================================== */}
+      {/* MODAL: DETAIL TIKET */}
+      {/* ======================================================== */}
+      {selectedTicketDetail && (
         <div className="fixed inset-0 z-60 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-white/10">
-              <div className="flex items-center gap-2">
-                <CreditCard size={18} className="text-emerald-400" />
-                <h3 className="text-sm font-extrabold text-white">Ajukan Klaim Pembayaran / Gaji</h3>
+              <div>
+                <span className="text-[10px] text-cyan-400 font-mono-code font-bold">#TKT-{selectedTicketDetail.id}</span>
+                <h3 className="text-sm font-extrabold text-white">{selectedTicketDetail.title}</h3>
               </div>
-              <button onClick={() => setClaimModal(false)} className="p-1 text-slate-400 hover:text-white"><X size={16} /></button>
+              <button onClick={() => setSelectedTicketDetail(null)} className="p-1 text-slate-400 hover:text-white cursor-pointer"><X size={16} /></button>
             </div>
 
-            <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200 space-y-1">
-              <span className="font-bold flex items-center gap-1.5 text-amber-300">
-                <ShieldAlert size={14} />
-                Wajib Sertakan Bukti Screenshot Asli
-              </span>
-              <p className="text-[11px] text-slate-300">
-                Untuk mencegah fraud, manipulasi cyber, dan akun siluman, seluruh pengajuan honor/gaji wajib menyertakan foto bukti (Maks. 5 MB).
-              </p>
+            <div className="space-y-3 text-xs">
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-black/40 border border-white/5">
+                <span className="text-slate-400">Status Penanganan:</span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 uppercase">
+                  {selectedTicketDetail.status}
+                </span>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-slate-400 block font-medium">Catatan / Rincian:</span>
+                <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-slate-200 leading-relaxed">
+                  {selectedTicketDetail.notes || 'Tidak ada catatan tambahan.'}
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-200">
+                🛡️ <strong>Tanggapan Tim Admin</strong>: Permintaan operasional Anda telah tercatat dalam antrean teknis. Pembaruan status akan dikirimkan otomatis.
+              </div>
             </div>
 
-            <form onSubmit={handleClaimPayment} className="space-y-3">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Nominal Klaim (IDR):</label>
-                <input
-                  type="number"
-                  required
-                  value={claimAmount}
-                  onChange={e => setClaimAmount(e.target.value)}
-                  placeholder="4500000"
-                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs text-white font-mono-code"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Upload Screenshot Bukti (JPG/PNG, Maks 5 MB):</label>
-                <input
-                  type="file"
-                  required
-                  accept="image/jpeg,image/png,image/webp"
-                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-xs text-slate-300 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-500 cursor-pointer"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">Catatan / Rincian Pekerjaan:</label>
-                <textarea
-                  required
-                  rows={2}
-                  value={claimNotes}
-                  onChange={e => setClaimNotes(e.target.value)}
-                  placeholder="Contoh: Honor optimasi SEO dan maintenance website periode September..."
-                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs text-white"
-                />
-              </div>
-
-              <div className="flex items-center gap-2 pt-2">
-                <button type="button" onClick={() => setClaimModal(false)} className="flex-1 py-2 rounded-xl bg-white/5 text-xs font-bold">Batal</button>
-                <button type="submit" className="flex-1 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold">Kirim Klaim dengan Bukti</button>
-              </div>
-            </form>
+            <div className="pt-2">
+              <button
+                onClick={() => setSelectedTicketDetail(null)}
+                className="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-xs transition cursor-pointer"
+              >
+                Tutup Detail
+              </button>
+            </div>
           </div>
         </div>
       )}

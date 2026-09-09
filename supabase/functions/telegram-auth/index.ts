@@ -1,5 +1,8 @@
+// @ts-nocheck
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import { createClient } from 'npm:@supabase/supabase-js@2.57.0';
+
+declare const Deno: any;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -97,7 +100,7 @@ function base64urlToArrayBuffer(base64url: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-async function verifyTelegramJWT(idToken: string): Promise<Record<string, any>> {
+async function verifyTelegramJWT(idToken: string, clientId: string): Promise<Record<string, any>> {
   const [headerB64, payloadB64, signatureB64] = idToken.split('.');
   if (!headerB64 || !payloadB64 || !signatureB64) throw new Error('Invalid JWT format');
 
@@ -106,8 +109,8 @@ async function verifyTelegramJWT(idToken: string): Promise<Record<string, any>> 
   if (!jwksRes.ok) throw new Error('Failed to fetch Telegram JWKS');
   const { keys }: { keys: JsonWebKey[] } = await jwksRes.json();
   
-  const jwk = (keys as any[]).find(k => k.kid === header.kid) ?? keys[0];
-  if (!jwk) throw new Error('No matching JWK found');
+  const jwk = (keys as any[]).find(k => k.kid === header.kid);
+  if (!jwk) throw new Error('Unknown Telegram signing key');
 
   const publicKey = await crypto.subtle.importKey(
     'jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']
@@ -122,6 +125,9 @@ async function verifyTelegramJWT(idToken: string): Promise<Record<string, any>> 
 
   const payload = JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')));
   if (payload.exp && Date.now() / 1000 > payload.exp) throw new Error('JWT token expired');
+
+  if (payload.iss !== 'https://oauth.telegram.org') throw new Error('Invalid JWT issuer');
+  if (payload.aud !== clientId) throw new Error('Invalid JWT audience');
 
   return payload;
 }
@@ -243,7 +249,77 @@ Deno.serve(async (req: Request) => {
 
       await supabaseAdmin.from('telegram_updates').insert([{ update_id: updateId }]);
 
-      const message = body.message;
+      // Inline Query Handler
+      if (body.inline_query) {
+        const iq = body.inline_query;
+        const results = [
+          {
+            type: 'article',
+            id: 'res_webapp',
+            title: '📱 Buka Mini App Backoffice',
+            description: 'Buka portal manajemen Abiedien Suite & dashboard',
+            input_message_content: {
+              message_text: '🚀 *Abiedien Backoffice Portal*\nBuka Mini App terpadu untuk kelola domain, tiket, dan payroll.',
+              parse_mode: 'Markdown'
+            },
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '📱 Buka Dashboard WebApp', web_app: { url: 'https://abiedienbackoffice.pages.dev' } }]
+              ]
+            }
+          },
+          {
+            type: 'article',
+            id: 'res_claim',
+            title: '📸 Panduan Klaim Gaji & Payout',
+            description: 'Aturan klaim & upload bukti screenshot anti-fraud',
+            input_message_content: {
+              message_text: '📸 *Klaim Gaji & Payout Member*\nKirimkan screenshot bukti asli pekerjaan/transfer ke @sandekalabot.\nMaksimal 3 klaim per 24 jam demi keamanan audit.',
+              parse_mode: 'Markdown'
+            }
+          },
+          {
+            type: 'article',
+            id: 'res_domain',
+            title: '🌐 Status Verifikasi Domain & DNS',
+            description: 'Panduan verifikasi TXT Record DNS Cloudflare',
+            input_message_content: {
+              message_text: '🌐 *Verifikasi Domain & DNS*\nPastikan setting TXT Record sesuai arahan admin atau ketik `/status` di bot.',
+              parse_mode: 'Markdown'
+            }
+          }
+        ];
+
+        await fetch(`${TELEGRAM_API_BASE}/bot${botToken}/answerInlineQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            inline_query_id: iq.id,
+            results,
+            cache_time: 10,
+            is_personal: true
+          })
+        });
+
+        return new Response(JSON.stringify({ status: 'inline_query_answered' }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Group / Channel Admin Rights Event Handler
+      if (body.my_chat_member) {
+        const mcm = body.my_chat_member;
+        const newStatus = mcm.new_chat_member?.status;
+        const chatTitle = mcm.chat?.title || `Chat ${mcm.chat?.id}`;
+        console.log(`Bot status in ${chatTitle} (${mcm.chat?.id}) changed to: ${newStatus}`);
+        return new Response(JSON.stringify({ status: 'chat_member_updated' }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const message = body.message || body.channel_post;
       const callbackQuery = body.callback_query;
       const sender = message?.from || callbackQuery?.from;
       const chatId = message?.chat?.id || callbackQuery?.message?.chat?.id;
@@ -310,6 +386,13 @@ Deno.serve(async (req: Request) => {
       if (callbackQuery) {
         const data = callbackQuery.data;
 
+        // Acknowledge callback immediately to dismiss Telegram UI loader
+        fetch(`${TELEGRAM_API_BASE}/bot${botToken}/answerCallbackQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callback_query_id: callbackQuery.id })
+        }).catch(err => console.warn('answerCallbackQuery note:', err));
+
         if (data === 'btn_register') {
           await sendTelegramMessage(botToken, chatId, 
             `📝 *Form Pendaftaran Member*\n\nSilakan balas pesan ini dengan format:\n\`REG#Nama Lengkap#Email Anda\`\n\nContoh:\n\`REG#Budi Santoso#budi@gmail.com\``
@@ -324,6 +407,8 @@ Deno.serve(async (req: Request) => {
           }
         } else if (data === 'btn_rules') {
           await sendTelegramMessage(botToken, chatId, HINTS.security_rules);
+        } else if (data === 'btn_admin_help') {
+          await sendTelegramMessage(botToken, chatId, HINTS.admin_help);
         }
 
         return new Response(JSON.stringify({ status: 'callback_handled' }), {
@@ -384,7 +469,7 @@ Deno.serve(async (req: Request) => {
 
         const downloadUrl = `${TELEGRAM_API_BASE}/file/bot${botToken}/${fileInfo.result.file_path}`;
         const fileBuffer = await (await fetch(downloadUrl)).arrayBuffer();
-        const storagePath = `claims/${sender.id}/${Date.now()}_${bestPhoto.file_id.substring(0, 8)}.jpg`;
+        const storagePath = `claims/${sender.id}/${crypto.randomUUID()}.jpg`;
 
         // Upload to private bucket claim-evidence
         const { error: storageError } = await supabaseAdmin.storage
@@ -509,6 +594,119 @@ Deno.serve(async (req: Request) => {
         return new Response(JSON.stringify({ status: 'help_handled' }), { status: 200 });
       }
 
+      // /login command
+      if (text === '/login' || text === '/start login') {
+        if (!tgUser) {
+           await sendTelegramMessage(botToken, chatId, '⛔ *Akses Ditolak:* Telegram ID Anda belum terdaftar di sistem. Hubungi Super Admin.');
+           return new Response(JSON.stringify({ status: 'unauthorized' }), { status: 200 });
+        }
+        
+        if (tgUser.status !== 'active' && !isSuperAdmin) {
+           await sendTelegramMessage(botToken, chatId, '⛔ *Akses Ditolak:* Akun Anda sedang diblokir atau belum disetujui.');
+           return new Response(JSON.stringify({ status: 'blocked' }), { status: 200 });
+        }
+
+        const userEmail = tgUser.email;
+        if (!userEmail) {
+           await sendTelegramMessage(botToken, chatId, '⚠️ *Perhatian:* Akun Anda belum memiliki identitas email terdaftar. Minta Super Admin memperbarui data Anda.');
+           return new Response(JSON.stringify({ status: 'no_email' }), { status: 200 });
+        }
+
+        const effectiveRole = isSuperAdmin ? 'super_admin' : tgUser.role;
+
+        const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+          type: 'magiclink',
+          email: userEmail,
+          options: {
+            data: {
+              telegram_id: sender.id.toString(),
+              role: effectiveRole,
+              dashboard_access: true,
+            },
+            redirectTo: 'https://abiedienbackoffice.pages.dev/'
+          }
+        });
+
+        if (linkError) {
+          await sendTelegramMessage(botToken, chatId, `❌ *Gagal membuat sesi login:*\n${linkError.message}`);
+          return new Response(JSON.stringify({ status: 'magiclink_error', error: linkError.message }), { status: 200 });
+        }
+
+        await sendTelegramMessage(botToken, chatId, `🔐 *Otorisasi Berhasil*\n\nKlik tombol di bawah ini untuk masuk secara otomatis ke Dashboard Abiedien. Tautan ini bersifat sekali pakai dan aman.`, {
+          inline_keyboard: [
+            [{ text: '🚀 Masuk ke Dashboard', url: linkData.properties.action_link }]
+          ]
+        });
+
+        return new Response(JSON.stringify({ status: 'magiclink_sent' }), { status: 200 });
+      }
+
+      // /register command
+      if (text.startsWith('/register')) {
+        await sendTelegramMessage(botToken, chatId, 
+          `📝 *Pendaftaran Member Abiedien*\n\nSilakan kirimkan data dengan format berikut:\n\`REG#Nama Lengkap#Email Anda\`\n\nContoh:\n\`REG#Budi Santoso#budi@gmail.com\``
+        );
+        return new Response(JSON.stringify({ status: 'register_handled' }), { status: 200 });
+      }
+
+      // /status command
+      if (text.startsWith('/status')) {
+        const roleLabel = isSuperAdmin ? 'Super Admin' : (tgUser?.role?.toUpperCase() || 'GUEST / BELUM TERDAFTAR');
+        const statusLabel = tgUser?.status?.toUpperCase() || 'PENDING';
+        const emailLabel = tgUser?.email || 'Belum terhubung';
+        
+        await sendTelegramMessage(botToken, chatId, 
+          `📊 *Status Akun & Layanan*\n\n• *ID Telegram:* \`${sender.id}\`\n• *Nama:* ${senderName}\n• *Role:* *${roleLabel}*\n• *Status:* \`${statusLabel}\`\n• *Email:* \`${emailLabel}\`\n• *Platform WebApp:* [abiedienbackoffice.pages.dev](https://abiedienbackoffice.pages.dev)\n\nKetik \`/login\` untuk membuat sesi masuk dashboard.`
+        );
+        return new Response(JSON.stringify({ status: 'status_handled' }), { status: 200 });
+      }
+
+      // /ticket command
+      if (text.startsWith('/ticket')) {
+        const assignedAdmin = tgUser?.assigned_admin_id || 7862805424;
+        await sendTelegramMessage(botToken, chatId, 
+          `🎫 *Pusat Bantuan & Tiket Support*\n\nUntuk kendala teknis atau pengaduan layanan, Anda dapat berkonsultasi langsung dengan Konsultan Admin resmi Anda:\n\n👤 *Admin Konsultan:* ID \`${assignedAdmin}\`\n\nKetik pesan pertanyaan Anda atau hubungi admin di atas.`, {
+          inline_keyboard: [
+            [{ text: '💬 Chat Admin Konsultan', url: `tg://user?id=${assignedAdmin}` }],
+            [{ text: '📱 Buka Dashboard Tiket', web_app: { url: 'https://abiedienbackoffice.pages.dev' } }]
+          ]
+        });
+        return new Response(JSON.stringify({ status: 'ticket_handled' }), { status: 200 });
+      }
+
+      // /traffic command
+      if (text.startsWith('/traffic')) {
+        await sendTelegramMessage(botToken, chatId, 
+          `📊 *Ringkasan Matriks Performa & Trafik Anycast*\n\n• *Edge Uptime:* 99.98% (Normal)\n• *Latency PoP:* ~24ms (Jakarta/Singapore)\n• *Cache Ratio:* 89.4% (Edge Hit)\n• *Protokol:* HTTP/3 + TLS 1.3 Active\n• *WAF & DDoS Defense:* Active\n\nUntuk melihat grafik real-time dan analisis per domain, silakan buka dashboard.`, {
+          inline_keyboard: [
+            [{ text: '📊 Buka Grafik Trafik Lengkap', web_app: { url: 'https://abiedienbackoffice.pages.dev' } }]
+          ]
+        });
+        return new Response(JSON.stringify({ status: 'traffic_handled' }), { status: 200 });
+      }
+
+      // /rules command
+      if (text.startsWith('/rules')) {
+        await sendTelegramMessage(botToken, chatId, 
+          `📜 *Kebijakan & Aturan Layanan Provider (SLA & AUP)*\n\n1. *Peran Layanan:* Penyedia routing Anycast, CDN, SSL & domain management.\n2. *SLA Uptime:* Jaminan 99.9% dengan respon tiket < 30 menit (kritis).\n3. *AUP (Larangan):* Dilarang aktivitas DDoS, spam, phishing, dan malware (suspensi otomatis).\n4. *Siklus Layanan:* Grace period 7 hari sebelum domain ditangguhkan.\n\nSeluruh ketentuan mengikat seluruh member demi keamanan ekosistem bersama.`, {
+          inline_keyboard: [
+            [{ text: '📜 Baca Kebijakan Lengkap di Portal', web_app: { url: 'https://abiedienbackoffice.pages.dev' } }]
+          ]
+        });
+        return new Response(JSON.stringify({ status: 'rules_handled' }), { status: 200 });
+      }
+
+      // /payment command
+      if (text.startsWith('/payment')) {
+        await sendTelegramMessage(botToken, chatId, HINTS.claim_prompt, {
+          inline_keyboard: [
+            [{ text: 'ℹ️ Aturan Keamanan & Fraud', callback_data: 'btn_rules' }],
+            [{ text: '📱 Cek Status Payroll', web_app: { url: 'https://abiedienbackoffice.pages.dev' } }]
+          ]
+        });
+        return new Response(JSON.stringify({ status: 'payment_handled' }), { status: 200 });
+      }
+
       // Admin commands
       if (text.startsWith('/admin')) {
         if (!isSuperAdmin) {
@@ -566,154 +764,13 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ status: 'default_handled' }), { status: 200 });
     }
 
-    // ==========================================
-    // 2. LINK TELEGRAM AUTH ENDPOINT (from Frontend)
-    // ==========================================
-    if (body.action === 'link_telegram' && body.telegram_id && body.email) {
-      const { data: updatedUser, error: updateErr } = await supabaseAdmin
-        .from('telegram_users')
-        .update({
-          email: body.email,
-          display_name: body.display_name || 'Member Terverifikasi',
-          role: 'member',
-          status: 'active',
-          updated_at: new Date().toISOString()
-        })
-        .eq('telegram_user_id', Number(body.telegram_id))
-        .select()
-        .single();
-
-      if (updateErr) throw updateErr;
-
-      return new Response(JSON.stringify({ success: true, user: updatedUser }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
 
     // ==========================================
-    // 3. WEB APP OPERATOR AUTH (OIDC / Login Widget)
+    // 3. LEGACY ENDPOINTS REMOVED
     // ==========================================
-    let telegramId: string | number | undefined;
-
-    if (body.code) {
-      const clientId = Deno.env.get('TELEGRAM_CLIENT_ID');
-      const clientSecret = Deno.env.get('TELEGRAM_CLIENT_SECRET');
-      const redirectUri = Deno.env.get('TELEGRAM_REDIRECT_URI') ?? 'https://abiedienbackoffice.pages.dev/';
-
-      if (!clientId || !clientSecret) {
-        throw new Error('Server configuration error: TELEGRAM credentials missing in Supabase secrets');
-      }
-
-      const tokenRes = await fetch(TELEGRAM_TOKEN_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'authorization_code',
-          client_id: clientId,
-          client_secret: clientSecret,
-          code: body.code,
-          redirect_uri: redirectUri,
-          ...(body.code_verifier ? { code_verifier: body.code_verifier } : {}),
-        }),
-      });
-
-      if (!tokenRes.ok) {
-        const err = await tokenRes.text();
-        throw new Error(`Token exchange failed: ${err}`);
-      }
-
-      const tokenData = await tokenRes.json();
-      const payload = await verifyTelegramJWT(tokenData.id_token);
-      telegramId = payload.sub ?? payload.id;
-
-    } else if (body.id_token) {
-      const payload = await verifyTelegramJWT(body.id_token);
-      telegramId = payload.sub ?? payload.id;
-
-    } else if (body.telegramPayload) {
-      if (!botToken) {
-        throw new Error('Server configuration error: TELEGRAM_BOT_TOKEN missing in Supabase secrets');
-      }
-
-      const isValid = await verifyTelegramHMAC(body.telegramPayload, botToken);
-      if (!isValid) {
-        return new Response(JSON.stringify({ error: 'Invalid Telegram Signature' }), {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-      telegramId = body.telegramPayload.id;
-    } else {
-      throw new Error('Invalid request payload');
-    }
-
-    if (!telegramId) throw new Error('Could not extract Telegram user ID');
-
-    const strTelegramId = String(telegramId);
-    const isSuperAdminAllowlisted = superAdminIds.includes(strTelegramId);
-
-    // Query user in database
-    let userRecord: { id?: string; email?: string; role?: string; full_name?: string } | null = null;
-
-    const { data: tgUsers } = await supabaseAdmin
-      .from('telegram_users')
-      .select('id, email, role, display_name')
-      .eq('telegram_user_id', strTelegramId)
-      .limit(1);
-
-    if (tgUsers && tgUsers.length > 0) {
-      userRecord = {
-        id: tgUsers[0].id,
-        email: tgUsers[0].email,
-        role: tgUsers[0].role,
-        full_name: tgUsers[0].display_name
-      };
-    }
-
-    if (!userRecord && !isSuperAdminAllowlisted) {
-      return new Response(JSON.stringify({ 
-        error: `Telegram ID (${telegramId}) belum terdaftar di database Backoffice. Hubungi Super Admin untuk mendaftarkan akun Anda.` 
-      }), {
-        status: 403,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const email = userRecord?.email || (isSuperAdminAllowlisted ? 'abiediendomba64@gmail.com' : null);
-    if (!email) {
-      return new Response(JSON.stringify({ error: 'Akun tidak memiliki email valid yang terdaftar.' }), {
-        status: 403,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const effectiveRole = isSuperAdminAllowlisted ? 'super_admin' : (userRecord?.role || 'operator');
-
-    const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
-      type: 'magiclink',
-      email,
-      options: {
-        data: {
-          telegram_id: strTelegramId,
-          role: effectiveRole,
-          dashboard_access: true,
-        }
-      }
-    });
-
-    if (linkError) throw linkError;
-
-    return new Response(JSON.stringify({
-      success: true,
-      email,
-      magic_link: linkData.properties.action_link,
-      user: {
-        telegram_id: strTelegramId,
-        email,
-        role: effectiveRole,
-        full_name: userRecord?.full_name || 'Abied Iendomba',
-      }
-    }), {
+    // OIDC and Widget flows are deprecated. All auth happens via the /login webhook command above.
+    return new Response(JSON.stringify({ error: 'Endpoint not supported. Use Telegram Bot /login command.' }), {
+      status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
