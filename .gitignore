@@ -149,5 +149,9 @@ meta.bat
 .env.local
 .env.production
 .telegram_webhook_secret.txt
+*.telegram_webhook_secret.txt
 *.secret.txt
 supabase/.env
+
+# Editor/IDE submodule — not part of source
+vscode-antigravity-cockpit/
