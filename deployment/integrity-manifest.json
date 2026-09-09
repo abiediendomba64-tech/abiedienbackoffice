@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "project": "abiedienbackoffice",
+  "version": "1.0.0",
+  "generated_at": "2026-09-09T17:43:00+07:00",
+  "source_control": {
+    "commit": "a163bfb22dd19eaa04f58589f3156f6e9750f934",
+    "branch": "main",
+    "repository": "abiediendomba64-tech/abiedienbackoffice"
+  },
+  "integrity_gate": {
+    "status": "LOCKED",
+    "approved_for_production": false,
+    "last_audit_phase": "PHASE_A"
+  },
+  "migrations": {
+    "applied_remote": [
+      "20260905000001_initial_schema.sql",
+      "20260905000002_contract_hardening.sql",
+      "20260905000003_supabase_schema.sql",
+      "20260905000004_atomic_ticket_mutation_and_fsm.sql",
+      "20260906000005_dashboard_access_and_auth_integrity.sql",
+      "20260907000006_telegram_users_claims_and_audit.sql"
+    ],
+    "pending_local": [
+      "20260909000007_security_remediation_p0.sql",
+      "20260909000008_system_controls.sql",
+      "20260909000009_capability_alignment.sql"
+    ],
+    "dry_run_verified": true
+  },
+  "edge_functions": {
+    "telegram-auth": {
+      "path": "supabase/functions/telegram-auth/index.ts",
+      "verify_jwt": false,
+      "routes": [
+        "/verify-init-data",
+        "/webhook-health"
+      ]
+    },
+    "backoffice-api-v3": {
+      "path": "supabase/functions/backoffice-api-v3/index.ts",
+      "verify_jwt": false,
+      "routes": [
+        "/login",
+        "/refresh",
+        "/session",
+        "/stats",
+        "/tickets/mutate",
+        "/emergency"
+      ]
+    }
+  },
+  "cloudflare": {
+    "project_name": "abiedienbackoffice",
+    "domain": "abiedienbackoffice.pages.dev"
+  },
+  "telegram": {
+    "bot_username": "sandekalabot",
+    "webhook_endpoint": "https://pnvnpencatzspkwxspac.supabase.co/functions/v1/telegram-auth"
+  }
+}

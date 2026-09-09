@@ -1,0 +1,95 @@
+warning: in the working copy of '.github/workflows/deploy-cloudflare.yml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of '.gitignore', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'index.html', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'public/_headers', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/App.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/index.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/lib/api.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/lib/ticketApi.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'supabase/functions/backoffice-api-v3/index.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'supabase/functions/telegram-auth/index.ts', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/.github/workflows/deploy-cloudflare.yml b/.github/workflows/deploy-cloudflare.yml[m
+[1mindex 9a57a04..f47f851 100644[m
+[1m--- a/.github/workflows/deploy-cloudflare.yml[m
+[1m+++ b/.github/workflows/deploy-cloudflare.yml[m
+[36m@@ -30,6 +30,11 @@[m [mjobs:[m
+         with:[m
+           node-version: 22[m
+ [m
+[32m+[m[32m      - name: Setup Supabase CLI[m
+[32m+[m[32m        uses: supabase/setup-cli@v1[m
+[32m+[m[32m        with:[m
+[32m+[m[32m          version: latest[m
+[32m+[m
+       - name: Install dependencies[m
+         run: npm ci || npm install[m
+ [m
+[36m@@ -42,3 +47,16 @@[m [mjobs:[m
+           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}[m
+           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}[m
+           command: pages deploy dist --project-name=abiedienbackoffice[m
+[32m+[m
+[32m+[m[32m      - name: Deploy Supabase Migrations[m
+[32m+[m[32m        run: supabase db push[m
+[32m+[m[32m        env:[m
+[32m+[m[32m          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}[m
+[32m+[m[32m          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}[m
+[32m+[m[32m          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}[m
+[32m+[m
+[32m+[m[32m      - name: Deploy Supabase Edge Functions[m
+[32m+[m[32m        run: supabase functions deploy[m
+[32m+[m[32m        env:[m
+[32m+[m[32m          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}[m
+[32m+[m[32m          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}[m
+[1mdiff --git a/.gitignore b/.gitignore[m
+[1mindex 876537f..2130dee 100644[m
+[1m--- a/.gitignore[m
+[1m+++ b/.gitignore[m
+[36m@@ -143,3 +143,11 @@[m [mvite.config.ts.timestamp-*[m
+ .vite/[m
+ .meta-panel-trigger[m
+ meta.bat[m
+[32m+[m
+[32m+[m[32m# Secrets — NEVER commit these[m
+[32m+[m[32m.env[m
+[32m+[m[32m.env.local[m
+[32m+[m[32m.env.production[m
+[32m+[m[32m.telegram_webhook_secret.txt[m
+[32m+[m[32m*.secret.txt[m
+[32m+[m[32msupabase/.env[m
+[1mdiff --git a/.telegram_webhook_secret.txt b/.telegram_webhook_secret.txt[m
+[1mindex c5b68ff..672a60e 100644[m
+Binary files a/.telegram_webhook_secret.txt and b/.telegram_webhook_secret.txt differ
+[1mdiff --git a/README.md b/README.md[m
+[1mindex 8ee2d0c..641b1dd 100644[m
+[1m--- a/README.md[m
+[1m+++ b/README.md[m
+[36m@@ -36,5 +36,5 @@[m [mnpm install[m
+ npm run dev[m
+ [m
+ # Production build[m
+[31m-npm run build[m
+[32m+[m
+ ```[m
+[1mdiff --git a/index.html b/index.html[m
+[1mindex e1048aa..6e56f6f 100644[m
+[1m--- a/index.html[m
+[1m+++ b/index.html[m
+[36m@@ -17,7 +17,7 @@[m
+     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">[m
+     <script src="https://telegram.org/js/telegram-web-app.js"></script>[m
+   </head>[m
+[31m-  <body class="bg-[#060d17] text-slate-100 antialiased min-h-screen selection:bg-cyan-500/30 selection:text-cyan-200 overscroll-none">[m
+[32m+[m[32m  <body class="bg-[#060d17] text-slate-100 antialiased min-h-screen selection:bg-cyan-500/30 selection:text-cyan-200">[m
+     <div id="root"></div>[m
+     <script type="module" src="/src/main.tsx"></script>[m
+   </body>[m
+[1mdiff --git a/public/_headers b/public/_headers[m
+[1mindex 653fb98..e06e9c1 100644[m
+[1m--- a/public/_headers[m
+[1m+++ b/public/_headers[m
+[36m@@ -4,4 +4,4 @@[m
+   Referrer-Policy: strict-origin-when-cross-origin[m
+   Permissions-Policy: camera=(), microphone=(), geolocation=()[m
+   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload[m
+[31m-  Content-Security-Policy: default-src 'self' https://*.supabase.co https://*.supabase.in https://api.telegram.org; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://telegram.org https://*.telegram.org; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect

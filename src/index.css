@@ -17,36 +17,70 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-html, body, #root {
+html {
   margin: 0;
   padding: 0;
-  min-height: 100vh;
-  min-height: -webkit-fill-available;
   width: 100%;
+  min-height: 100%;
   background-color: var(--bg-main);
   color: #f1f5f9;
   overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   -webkit-text-size-adjust: 100%;
+  touch-action: pan-y pinch-zoom;
+  overscroll-behavior-y: auto;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100%;
+  background-color: transparent;
+  color: inherit;
+  overflow-x: hidden;
+  overflow-y: visible;
+  touch-action: pan-y pinch-zoom;
+  overscroll-behavior-y: auto;
+}
+
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100%;
+  overflow: visible;
+  touch-action: pan-y pinch-zoom;
 }
 
 button, a, input, select, textarea {
   touch-action: manipulation;
 }
 
-/* Custom Sleek Scrollbar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Clearly visible and interactive scrollbar for PC & Telegram Desktop */
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: rgba(10, 21, 38, 0.5);
+  background: rgba(6, 13, 23, 0.9);
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(56, 189, 248, 0.4);
   border-radius: 999px;
+  border: 2px solid rgba(6, 13, 23, 0.9);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(56, 189, 248, 0.4);
+  background: rgba(56, 189, 248, 0.7);
 }
 
 /* Ambient Glassmorphic Backgrounds */

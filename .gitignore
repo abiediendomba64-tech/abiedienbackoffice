@@ -143,3 +143,11 @@ vite.config.ts.timestamp-*
 .vite/
 .meta-panel-trigger
 meta.bat
+
+# Secrets — NEVER commit these
+.env
+.env.local
+.env.production
+.telegram_webhook_secret.txt
+*.secret.txt
+supabase/.env

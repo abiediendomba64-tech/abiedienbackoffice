@@ -2,14 +2,18 @@ export type NavTab = 'dashboard' | 'users' | 'analytics' | 'logs' | 'tickets' | 
 
 export interface User {
   id: string;
-  name: string;
-  email: string;
-  role: 'Super Admin' | 'Admin' | 'Manager' | 'Support' | 'User';
-  status: 'active' | 'inactive' | 'suspended';
-  avatar: string;
-  lastLogin: string;
-  department: string;
-  projectsCount: number;
+  telegram_id?: string;
+  username?: string;
+  full_name: string;
+  email?: string;
+  role: 'new_user' | 'member' | 'admin' | 'dev' | 'super_admin' | 'root';
+  status: 'active' | 'suspended' | 'banned';
+  domain_name?: string;
+  domain_verified: boolean;
+  onboarding_status: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | 'QUARANTINED';
+  risk_status: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface AuditLog {
@@ -24,13 +28,19 @@ export interface AuditLog {
 
 export interface SupportTicket {
   id: string;
-  subject: string;
-  user: string;
-  email: string;
-  priority: 'low' | 'medium' | 'high' | 'urgent';
-  status: 'open' | 'in_progress' | 'resolved' | 'closed';
-  createdAt: string;
+  ticket_number: string;
+  user_id: string;
+  assigned_to?: string;
   category: string;
+  priority: 'urgent' | 'high' | 'medium' | 'low';
+  status: 'draft' | 'pending' | 'assigned' | 'waiting_member' | 'in_progress' | 'escalated' | 'resolved' | 'closed' | 'rejected' | 'cancelled';
+  title?: string;
+  description: string;
+  collected_data: Record<string, any>;
+  resolution_notes?: string;
+  resolved_at?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface SystemMetric {
@@ -39,4 +49,17 @@ export interface SystemMetric {
   change: string;
   isPositive: boolean;
   timeframe: string;
+}
+
+export interface LoginDetectionRecord {
+  id: string;
+  telegramId: string;
+  name: string;
+  username: string;
+  role: 'super_admin' | 'member' | 'guest';
+  status: 'authorized' | 'denied' | 'pending';
+  timestamp: string;
+  platform: 'telegram_mobile' | 'telegram_desktop' | 'web_browser';
+  authMethod: string;
+  ipHint?: string;
 }
