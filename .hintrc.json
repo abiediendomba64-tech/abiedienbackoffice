@@ -1,0 +1,9 @@
+{
+  "$schema": "https://webhint.io/schema.json",
+  "extends": ["development"],
+  "hints": {
+    "meta-viewport": "off",
+    "meta-theme-color": "off",
+    "compat-api/css": "off"
+  }
+}
