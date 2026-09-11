@@ -10,30 +10,31 @@ ALTER TABLE public.dashboard_access ADD CONSTRAINT valid_dashboard_role
     CHECK (role IN ('admin', 'dev', 'super_admin', 'root'));
 
 -- 2. Register new capabilities in the registry
-INSERT INTO public.backoffice_capabilities (code, description, category) VALUES
-('telegram.send_notification', 'Mengirim notifikasi ke Telegram (E2E)', 'telegram'),
-('dashboard.access', 'Akses masuk antarmuka backoffice operator', 'dashboard')
-ON CONFLICT (code) DO NOTHING;
+INSERT INTO public.backoffice_capabilities (capability, description) VALUES
+('telegram.send_notification', 'Mengirim notifikasi ke Telegram (E2E)'),
+('dashboard.access', 'Akses masuk antarmuka backoffice operator')
+ON CONFLICT (capability) DO NOTHING;
 
 -- Grant capabilities strictly aligned with operational hierarchy
 -- dev: operations/troubleshooting, but NOT sending arbitrary telegram broadcasts
-INSERT INTO public.backoffice_role_capabilities (role, capability_code) VALUES
--- Root
-('root', 'dashboard.access'),
-('root', 'telegram.send_notification'),
--- Super Admin
-('super_admin', 'dashboard.access'),
-('super_admin', 'telegram.send_notification'),
--- Admin
-('admin', 'dashboard.access'),
-('admin', 'telegram.send_notification'),
--- Dev
-('dev', 'dashboard.access')
-ON CONFLICT (role, capability_code) DO NOTHING;
+INSERT INTO public.backoffice_role_capabilities (role, capability_id)
+SELECT r.role, bc.id
+FROM (VALUES ('root'), ('super_admin'), ('admin'), ('dev')) AS r(role)
+CROSS JOIN public.backoffice_capabilities bc
+WHERE bc.capability = 'dashboard.access'
+ON CONFLICT (role, capability_id) DO NOTHING;
+
+INSERT INTO public.backoffice_role_capabilities (role, capability_id)
+SELECT r.role, bc.id
+FROM (VALUES ('root'), ('super_admin'), ('admin')) AS r(role)
+CROSS JOIN public.backoffice_capabilities bc
+WHERE bc.capability = 'telegram.send_notification'
+ON CONFLICT (role, capability_id) DO NOTHING;
 
 -- 3. Security-Definer Helper Functions (Breaking recursive RLS)
 
 -- Helper A: Fetch current operator identity safely without circular RLS
+DROP FUNCTION IF EXISTS public.backoffice_current_access();
 CREATE OR REPLACE FUNCTION public.backoffice_current_access()
 RETURNS TABLE (
     user_id BIGINT,
@@ -57,7 +58,7 @@ REVOKE EXECUTE ON FUNCTION public.backoffice_current_access() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.backoffice_current_access() TO authenticated, service_role;
 
 -- Helper B: Unified capability checker
-CREATE OR REPLACE FUNCTION public.backoffice_has_capability(p_capability_code VARCHAR(100))
+CREATE OR REPLACE FUNCTION public.backoffice_has_capability(required_capability VARCHAR(100))
 RETURNS BOOLEAN
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -82,12 +83,13 @@ BEGIN
         RETURN FALSE;
     END IF;
 
-    -- Check if role has this exact capability
+    -- Check if role has this exact capability (join with capabilities table)
     SELECT EXISTS (
         SELECT 1
         FROM public.backoffice_role_capabilities rc
+        JOIN public.backoffice_capabilities bc ON bc.id = rc.capability_id
         WHERE rc.role = v_role
-          AND rc.capability_code = p_capability_code
+          AND bc.capability = required_capability
     ) INTO v_has_cap;
 
     RETURN COALESCE(v_has_cap, FALSE);

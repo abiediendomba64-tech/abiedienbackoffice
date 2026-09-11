@@ -7470,6 +7470,30 @@ function UniversalAuthView({ email, password, setEmail, setPassword, loading, er
                   </div>
                 </div>
 
+                {/* Telegram Login Button */}
+                <div className="space-y-2 pt-2">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-px bg-white/10"></div>
+                    <span className="text-[10px] text-slate-500 font-medium uppercase">Atau masuk dengan</span>
+                    <div className="flex-1 h-px bg-white/10"></div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const redirectUrl = window.location.origin;
+                      const authUrl = `https://oauth.telegram.org/auth?bot_id=8849114090&origin=${encodeURIComponent(redirectUrl)}&embed=1&request_access=write`;
+                      window.open(authUrl, 'telegram_auth', 'width=550,height=550,left=400,top=200');
+                    }}
+                    className="w-full py-3 rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-400 hover:to-cyan-400 text-white font-bold text-xs flex items-center justify-center gap-2.5 transition cursor-pointer shadow-lg shadow-blue-500/20"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
+                      <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.161c-.18 1.897-.962 6.502-1.359 8.627-.168.9-.5 1.201-.82 1.23-.697.064-1.226-.461-1.901-.903-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.139-5.062 3.345-.479.329-.913.489-1.302.481-.428-.009-1.252-.242-1.865-.442-.752-.244-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.831-2.529 6.998-3.015 3.333-1.386 4.025-1.627 4.477-1.635.099-.002.321.023.465.141.121.099.154.232.17.325.015.094.034.31.019.478z"/>
+                    </svg>
+                    <span>Masuk dengan Telegram</span>
+                  </button>
+                  <p className="text-[10px] text-slate-500 text-center">Login otomatis via @sandekalabot</p>
+                </div>
+
                 <button 
                   type="submit" 
                   disabled={memberLoading}

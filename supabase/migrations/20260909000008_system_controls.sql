@@ -6,15 +6,17 @@
 -- ====================================================================
 
 -- 1. Ensure capability 'system.manage_controls' is registered
-INSERT INTO public.backoffice_capabilities (code, description, category) VALUES
-('system.manage_controls', 'Mengelola emergency flags (freeze payment, freeze claims dll)', 'system')
-ON CONFLICT (code) DO NOTHING;
+INSERT INTO public.backoffice_capabilities (capability, description) VALUES
+('system.manage_controls', 'Mengelola emergency flags (freeze payment, freeze claims dll)')
+ON CONFLICT (capability) DO NOTHING;
 
--- Grant to root and super_admin
-INSERT INTO public.backoffice_role_capabilities (role, capability_code) VALUES
-('super_admin', 'system.manage_controls'),
-('root', 'system.manage_controls')
-ON CONFLICT (role, capability_code) DO NOTHING;
+-- Grant to root and super_admin (use subquery to resolve capability_id)
+INSERT INTO public.backoffice_role_capabilities (role, capability_id)
+SELECT r.role, bc.id
+FROM (VALUES ('super_admin'), ('root')) AS r(role)
+CROSS JOIN public.backoffice_capabilities bc
+WHERE bc.capability = 'system.manage_controls'
+ON CONFLICT (role, capability_id) DO NOTHING;
 
 -- 2. Table: system_controls
 CREATE TABLE IF NOT EXISTS public.system_controls (
@@ -92,8 +94,9 @@ BEGIN
         -- Check capability 'system.manage_controls'
         IF NOT EXISTS (
             SELECT 1 FROM public.backoffice_role_capabilities rc
+            JOIN public.backoffice_capabilities bc ON bc.id = rc.capability_id
             WHERE rc.role = v_actor_role
-              AND rc.capability_code = 'system.manage_controls'
+              AND bc.capability = 'system.manage_controls'
         ) AND v_actor_role NOT IN ('super_admin', 'root') THEN
             RAISE EXCEPTION 'Access denied: role % lacks system.manage_controls capability', v_actor_role;
         END IF;
