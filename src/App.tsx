@@ -71,6 +71,7 @@ import {
 } from 'lucide-react';
 import { 
   sendPaymentVerifiedNotification, 
+  sendTelegramNotification,
   executeEmergencyAction, 
   logAuditAction,
   fetchUserClaims,
@@ -269,13 +270,18 @@ async function api<T>(url: string, init: RequestInit = {}): Promise<T> {
       localStorage.removeItem('backoffice_access_token'); 
       throw new Error('401 Unauthorized — sesi kedaluwarsa atau akun belum memiliki dashboard_access');
     } 
-    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`); 
+    if (!r.ok) {
+      let msg = `${r.status} ${r.statusText}`;
+      try {
+        const j = await r.json();
+        if (j?.message) msg = j.message;
+        else if (j?.error && typeof j.error === 'string') msg = j.error;
+      } catch (_) { /* response is not JSON */ }
+      throw new Error(msg);
+    }
     return r.json() as Promise<T>; 
   } catch (err: any) {
-    if (url === '/admin/actions/execute') {
-      return { success: true, message: 'Action executed' } as unknown as T;
-    }
-    console.warn(`API call ${url} failed, using local fallback:`, err);
+    console.warn(`API call ${url} failed:`, err);
     throw err;
   }
 }
@@ -378,8 +384,8 @@ export default function App() {
   const [query, setQuery] = useState(''); 
   const [selected, setSelected] = useState<any | null>(null); 
   const [authenticated, setAuthenticated] = useState<boolean>(() => Boolean(localStorage.getItem('backoffice_access_token'))); 
-  const [email, setEmail] = useState('abiediendomba64@gmail.com'); 
-  const [password, setPassword] = useState('••••••••••••'); 
+  const [email, setEmail] = useState(''); 
+  const [password, setPassword] = useState(''); 
   const [loggingIn, setLoggingIn] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -403,6 +409,30 @@ export default function App() {
   const [domainOrders, setDomainOrders] = useState<DomainOrderRequest[]>(() => getDomainOrdersList());
   const [memberInventories, setMemberInventories] = useState<MemberDomainInventory[]>(() => getMemberInventoryList());
   const [technicalCases, setTechnicalCases] = useState<TechnicalCase[]>(() => getTechnicalCasesList());
+  const [commandMenuOpen, setCommandMenuOpen] = useState(false);
+  const [commandInput, setCommandInput] = useState('');
+
+  // Command hierarchy for / commands
+  const commandHierarchy = [
+    { cmd: '/start', desc: 'Menu utama & selamat datang', category: 'Umum' },
+    { cmd: '/login', desc: 'Buat sesi masuk dashboard', category: 'Umum' },
+    { cmd: '/status', desc: 'Cek status akun & layanan', category: 'Umum' },
+    { cmd: '/order', desc: 'Order domain baru (Rp 170k)', category: 'Domain' },
+    { cmd: '/domains', desc: 'Daftar domain yang dimiliki', category: 'Domain' },
+    { cmd: '/creds', desc: 'Lihat kredensial panel domain', category: 'Domain' },
+    { cmd: '/ticket', desc: 'Buat tiket support baru', category: 'Support' },
+    { cmd: '/tickets', desc: 'Daftar tiket saya', category: 'Support' },
+    { cmd: '/klaim', desc: 'Ajukan klaim gaji (75%)', category: 'Keuangan' },
+    { cmd: '/bayar', desc: 'Info pembayaran & bukti transfer', category: 'Keuangan' },
+    { cmd: '/gaji', desc: 'Riwayat transfer gaji', category: 'Keuangan' },
+    { cmd: '/push', desc: 'Push indexing domain', category: 'SEO' },
+    { cmd: '/audit', desc: 'Audit indexing & SEO', category: 'SEO' },
+    { cmd: '/broadcast', desc: 'Kirim siaran (Admin)', category: 'Admin' },
+    { cmd: '/users', desc: 'Daftar member (Admin)', category: 'Admin' },
+    { cmd: '/verify', desc: 'Verifikasi pembayaran (Admin)', category: 'Admin' },
+    { cmd: '/emergency', desc: 'Menu darurat & mitigasi', category: 'Admin' },
+    { cmd: '/help', desc: 'Bantuan & daftar perintah', category: 'Umum' },
+  ];
 
   const visibleWebAppTabs = useMemo(() => {
     if (currentUserRole === 'super_admin') return webAppTabs;
@@ -701,6 +731,111 @@ export default function App() {
     return matchesSearch;
   }), [payments, query, paymentStart, paymentEnd]);
 
+  // Handle command execution from / command menu
+  const handleCommandExecute = (cmd: string) => {
+    const isAdmin = ['super_admin', 'admin', 'dev'].includes(currentUserRole);
+    switch (cmd) {
+      case '/start':
+        showToast('Selamat datang di Abiedien Backoffice! Gunakan /help untuk melihat perintah.', 'success');
+        break;
+      case '/login':
+        if (!authenticated) {
+          // Already on login page
+          showToast('Silakan login menggunakan form di atas.', 'success');
+        } else {
+          showToast('Anda sudah login.', 'success');
+        }
+        break;
+      case '/status':
+        setHierarchyModalOpen(true);
+        break;
+      case '/order':
+        setWebTab('domain_orders');
+        setWorkspace('web_apps');
+        showToast('Buka Order Domain .com (Rp 170.000)', 'success');
+        break;
+      case '/domains':
+        setWebTab('domains');
+        setWorkspace('web_apps');
+        break;
+      case '/creds':
+        setWebTab('member_inventory');
+        setWorkspace('web_apps');
+        showToast('Buka Kredensial Panel Domain', 'success');
+        break;
+      case '/ticket':
+        setWebTab('tickets');
+        setWorkspace('web_apps');
+        showToast('Buka Tiket Support', 'success');
+        break;
+      case '/tickets':
+        setWebTab('tickets');
+        setWorkspace('web_apps');
+        break;
+      case '/klaim':
+        setWebTab('payments');
+        setWorkspace('web_apps');
+        showToast('Buka Klaim Gaji (Sistem 75%)', 'success');
+        break;
+      case '/bayar':
+        setWebTab('payments');
+        setWorkspace('web_apps');
+        showToast('Buka Info Pembayaran & Bukti Transfer', 'success');
+        break;
+      case '/gaji':
+        setWebTab('payments');
+        setWorkspace('web_apps');
+        break;
+      case '/push':
+        setWebTab('seo');
+        setWorkspace('web_apps');
+        showToast('Buka Push Indexing', 'success');
+        break;
+      case '/audit':
+        setWebTab('seo');
+        setWorkspace('web_apps');
+        showToast('Buka Audit Indexing & SEO', 'success');
+        break;
+      case '/broadcast':
+        if (isAdmin) {
+          setWebTab('broadcast');
+          setWorkspace('web_apps');
+        } else {
+          showToast('Akses ditolak. Hanya Admin.', 'error');
+        }
+        break;
+      case '/users':
+        if (isAdmin) {
+          setWebTab('members');
+          setWorkspace('web_apps');
+        } else {
+          showToast('Akses ditolak. Hanya Admin.', 'error');
+        }
+        break;
+      case '/verify':
+        if (isAdmin) {
+          setWebTab('payments');
+          setWorkspace('web_apps');
+          showToast('Buka Verifikasi Pembayaran', 'success');
+        } else {
+          showToast('Akses ditolak. Hanya Admin.', 'error');
+        }
+        break;
+      case '/emergency':
+        if (isAdmin) {
+          setEmergencyModalOpen(true);
+        } else {
+          showToast('Akses ditolak. Hanya Admin.', 'error');
+        }
+        break;
+      case '/help':
+        setCommandMenuOpen(true);
+        break;
+      default:
+        showToast(`Perintah ${cmd} tidak dikenali. Ketik /help untuk bantuan.`, 'error');
+    }
+  };
+
   if (!authenticated) {
     return (
       <UniversalAuthView 
@@ -746,8 +881,8 @@ export default function App() {
       {mobileDrawerOpen && (
         <div className="fixed inset-0 z-50 flex md:hidden animate-fade-in">
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setMobileDrawerOpen(false)} />
-          <div className="relative w-4/5 max-w-xs glass-sidebar h-full p-5 flex flex-col z-10 shadow-2xl overflow-y-auto">
-            <div className="flex items-center justify-between pb-4 border-b border-white/10">
+          <div className="relative w-4/5 max-w-xs glass-sidebar h-full min-h-0 p-5 flex flex-col z-10 shadow-2xl overflow-y-auto overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
+            <div className="flex items-center justify-between pb-4 border-b border-white/10 shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-300">
                   <Bot size={18} />
@@ -763,7 +898,7 @@ export default function App() {
             </div>
 
             {/* Workspace Toggle on Mobile */}
-            <div className="my-4 p-1 rounded-xl bg-black/40 border border-white/10 flex items-center">
+            <div className="my-4 p-1 rounded-xl bg-black/40 border border-white/10 flex items-center shrink-0">
               <button
                 onClick={() => setWorkspace('web_apps')}
                 className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition ${workspace === 'web_apps' ? 'bg-cyan-600 text-white shadow-xs' : 'text-slate-400'}`}
@@ -774,11 +909,11 @@ export default function App() {
                 onClick={() => setWorkspace('telegram_web')}
                 className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition ${workspace === 'telegram_web' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-400'}`}
               >
-                🤖 Telegram
+                🤖 DS
               </button>
             </div>
 
-            <nav className="space-y-1">
+            <nav className="space-y-1 flex-1 min-h-0 overflow-y-auto overscroll-contain pr-1" style={{ WebkitOverflowScrolling: 'touch' }}>
               {workspace === 'web_apps' ? (
                 visibleWebAppTabs.map(({ id, label, icon: IconComp, badgeKey }) => {
                   let count = 0;
@@ -825,9 +960,9 @@ export default function App() {
       )}
 
       {/* Desktop Persistent Sidebar */}
-      <aside className="hidden md:flex w-64 glass-sidebar h-screen p-4 flex-col fixed left-0 top-0 z-40 border-r border-white/10">
+      <aside className="hidden md:flex w-64 glass-sidebar h-screen p-4 flex-col fixed left-0 top-0 z-40 border-r border-white/10 min-h-0">
         {/* Brand Header */}
-        <div className="flex items-center gap-3 px-2 py-3 border-b border-white/10">
+        <div className="flex items-center gap-3 px-2 py-3 border-b border-white/10 shrink-0">
           <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-white shadow-glow-cyan">
             <Bot size={22} />
           </div>
@@ -836,7 +971,7 @@ export default function App() {
               <span>ABIEDIEN</span>
               <span className="px-1.5 py-0.2 rounded text-[8px] font-black uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">V3.4</span>
             </div>
-            <span className="text-[11px] text-slate-400 block font-medium">Enterprise Backoffice</span>
+            <span className="text-[11px] text-slate-400 block font-medium">Backpanel</span>
           </div>
         </div>
 
@@ -863,12 +998,12 @@ export default function App() {
             }`}
           >
             <Bot size={13} />
-            <span>Telegram</span>
+            <span>DS</span>
           </button>
         </div>
 
         {/* Scrollable Navigation Items */}
-        <nav className="mt-4 flex-1 space-y-1 overflow-y-auto pr-1">
+        <nav className="mt-4 flex-1 min-h-0 space-y-1 overflow-y-auto overscroll-contain pr-1" style={{ WebkitOverflowScrolling: 'touch' }}>
           {workspace === 'web_apps' ? (
             visibleWebAppTabs.map(({ id, label, icon: IconComp, badgeKey }) => {
               const isActive = webTab === id;
@@ -920,7 +1055,7 @@ export default function App() {
         </nav>
 
         {/* User Session Footer */}
-        <div className="pt-3 border-t border-white/5 space-y-2.5">
+        <div className="pt-3 border-t border-white/5 space-y-2.5 shrink-0">
           <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/5 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-xs font-bold text-white">
@@ -949,7 +1084,7 @@ export default function App() {
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 md:ml-64 flex flex-col min-w-0 pb-32">
+      <div className="flex-1 md:ml-64 flex flex-col min-w-0 pb-32 overflow-x-hidden">
         {/* Top Sticky Header */}
         <header className="px-4 sm:px-8 py-3.5 glass-topbar sticky top-0 z-30 flex flex-col gap-3">
           <div className="flex items-center justify-between gap-3">
@@ -1072,6 +1207,16 @@ export default function App() {
               >
                 <ShieldAlert size={15} className="text-rose-400 animate-pulse" />
                 <span className="hidden sm:inline">Menu Instan</span>
+              </button>
+
+              {/* Command Menu / Menu Perintah */}
+              <button 
+                onClick={() => setCommandMenuOpen(true)} 
+                className="p-2 sm:px-3 sm:py-1.5 rounded-xl text-xs font-bold bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/25 flex items-center gap-1.5 transition cursor-pointer active:scale-95 shadow-xs" 
+                title="Menu Perintah (/) - Akses Cepat Fitur"
+              >
+                <Terminal size={15} className="text-indigo-400" />
+                <span className="hidden sm:inline">/ Cmd</span>
               </button>
 
               {/* Manual Refresh */}
@@ -1281,7 +1426,7 @@ export default function App() {
           }`}
         >
           <Bot size={18} />
-          <span className="text-[10px]">Telegram</span>
+          <span className="text-[10px]">DS</span>
         </button>
       </nav>
 
@@ -1353,6 +1498,20 @@ export default function App() {
             showToast('Log riwayat masuk berhasil dibersihkan.', 'success');
           }}
           close={() => setLoginInspectorModalOpen(false)}
+        />
+      )}
+
+      {/* Command Menu Modal - Menu Perintah Cepat */}
+      {commandMenuOpen && (
+        <CommandMenuModal
+          close={() => setCommandMenuOpen(false)}
+          commandHierarchy={commandHierarchy}
+          currentUserRole={currentUserRole}
+          onExecuteCommand={(cmd) => {
+            setCommandMenuOpen(false);
+            handleCommandExecute(cmd);
+          }}
+          showToast={showToast}
         />
       )}
 
@@ -2523,6 +2682,87 @@ function DomainsView({ domains, onSelect }: { domains: any[]; onSelect: (v: any)
                 </p>
               </div>
 
+              {selectedTier === 'pro' && (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs space-y-1.5">
+                  <span className="font-bold text-amber-300 block">💳 Pembayaran Domain Berbayar (Transfer Bank / E-Wallet)</span>
+                  <div className="space-y-2">
+                    <div className="p-2 rounded-lg bg-black/30 border border-white/5">
+                      <div className="text-[10px] text-slate-400 font-bold uppercase mb-1">Provider Pembayaran Tersedia:</div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-white/5">
+                          <span className="text-[10px] font-bold text-blue-300">BCA</span>
+                          <span className="text-[9px] text-slate-400">8820-1928-31</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-white/5">
+                          <span className="text-[10px] font-bold text-green-300">Sea Bank</span>
+                          <span className="text-[9px] text-slate-400">9012-3456-78</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-white/5">
+                          <span className="text-[10px] font-bold text-red-300">Mandiri</span>
+                          <span className="text-[9px] text-slate-400">183-000-7183303</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-white/5">
+                          <span className="text-[10px] font-bold text-yellow-300">BRI</span>
+                          <span className="text-[9px] text-slate-400">0129-0182-91823</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-white/5">
+                          <span className="text-[10px] font-bold text-purple-300">BNI</span>
+                          <span className="text-[9px] text-slate-400">0192-8371-1</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-white/5">
+                          <span className="text-[10px] font-bold text-cyan-300">GoPay</span>
+                          <span className="text-[9px] text-slate-400">0812-3456-7890</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-slate-200">
+                      <span className="text-slate-400">Nama Rekening:</span><span className="font-bold">AISAH</span>
+                      <span className="text-slate-400">Periodisitas:</span><span>Rp 170.000 / thn (.com)</span>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    ⚠️ Wajib kirim screenshot bukti transfer (maks 5MB) sebagai attachment tiket agar admin dapat diverifikasi pembayaran sebelum domain di-ACC & aktif.
+                  </p>
+                </div>
+              )}
+
+              {/* Username & Password for Domain Panel */}
+              <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-xs space-y-2">
+                <span className="font-bold text-cyan-300 block">🔐 Kredensial Panel Domain (Backoffice Login)</span>
+                <p className="text-[10px] text-slate-400">Buat username dan password untuk akses panel domain Anda (contoh: domain.com/backoffice).</p>
+                <div className="space-y-2">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-semibold text-slate-300 block">Username Panel:</label>
+                    <input
+                      type="text"
+                      placeholder="contoh: abiedien_ops"
+                      className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-semibold text-slate-300 block">Password Panel:</label>
+                    <input
+                      type="password"
+                      placeholder="Buat password yang kuat"
+                      className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-semibold text-slate-300 block">Tema Warna Panel:</label>
+                    <div className="flex gap-2">
+                      {['cyan', 'purple', 'emerald', 'rose', 'amber'].map(color => (
+                        <button
+                          key={color}
+                          type="button"
+                          className={`w-6 h-6 rounded-full bg-${color}-500 border-2 border-transparent hover:border-white/50 transition`}
+                          title={color}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div className="flex items-center gap-2 pt-2">
                 <button
                   type="button"
@@ -3612,7 +3852,7 @@ function CommunityForumView({ topics, onSelect }: any) {
       {/* Official Telegram External Links Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <a
-          href="https://t.me/+AbiedienCommunity"
+          href="https://t.me/+ybOzZ_lstEdhNDU1"
           target="_blank"
           rel="noopener noreferrer"
           className="glass-card p-4 rounded-2xl border border-blue-500/30 hover:border-blue-500/60 hover:bg-blue-500/10 transition group flex items-center justify-between"
@@ -4404,6 +4644,25 @@ server {
 // DOMAIN ORDERS & WHOIS VERIFICATION VIEW
 // ==========================================
 
+// Map a canonical ticket FSM status to the domain-order view status.
+function mapTicketStatus(s: string): DomainOrderRequest['status'] {
+  switch (s) {
+    case 'resolved':
+    case 'closed':
+      return 'active';
+    case 'rejected':
+    case 'cancelled':
+      return 'rejected';
+    case 'in_progress':
+    case 'assigned':
+    case 'escalated':
+    case 'waiting_member':
+      return 'whois_verified';
+    default:
+      return 'waiting_payment';
+  }
+}
+
 function DomainOrdersView({ orders: initialOrders, onUpdateOrders, onToast }: {
   orders: DomainOrderRequest[];
   onUpdateOrders: (orders: DomainOrderRequest[]) => void;
@@ -4416,6 +4675,42 @@ function DomainOrdersView({ orders: initialOrders, onUpdateOrders, onToast }: {
   const [newDomainName, setNewDomainName] = useState('');
   const [newRequesterName, setNewRequesterName] = useState('');
   const [newTelegramId, setNewTelegramId] = useState('');
+
+  // Map a real domain-request ticket (from create_domain_request_ticket / tickets category=domain_request) to the view shape.
+  const mapRealTicket = (t: any): DomainOrderRequest => {
+    const status = mapTicketStatus(t.status);
+    return {
+      id: `TKT-${t.id}`,
+      ticketNumber: t.ticket_number,
+      telegramId: String(t.collected_data?.telegram_user_id || ''),
+      requesterName: t.title ? t.title.replace(/^Domain Request:\s*/i, '').trim() : '—',
+      domainName: t.collected_data?.requested_domain || '',
+      domainExt: t.collected_data?.tld ? '.' + t.collected_data.tld : '.com',
+      priceIdr: 170000,
+      status,
+      whoisStatus: status === 'active' ? 'verified' : 'available',
+      nameservers: [],
+      cloudflareDnsProxy: false,
+      notes: t.description || '',
+      createdAt: String(t.created_at || '').replace('T', ' ').substring(0, 19),
+      updatedAt: String(t.updated_at || '').replace('T', ' ').substring(0, 19),
+    };
+  };
+
+  // On mount, try to load real domain-request tickets from the backend.
+  // If any real rows exist, replace the local/mock list so the view reflects server truth.
+  useEffect(() => {
+    let cancelled = false;
+    api<DomainOrderRequest[] | any[]>('/domain-orders')
+      .then((rows: any[]) => {
+        if (cancelled || !Array.isArray(rows) || rows.length === 0) return;
+        const mapped = rows.map(mapRealTicket);
+        setOrdersList(mapped);
+        onUpdateOrders(mapped);
+      })
+      .catch(() => { /* backend unreachable — keep local mock for offline/dev */ });
+    return () => { cancelled = true; };
+  }, []);
 
   const filteredOrders = useMemo(() => {
     if (statusFilter === 'all') return ordersList;
@@ -4460,37 +4755,43 @@ function DomainOrdersView({ orders: initialOrders, onUpdateOrders, onToast }: {
     onToast(`Status order ${order.domainName} diperbarui ke ${nextStatus}.`, 'success');
   };
 
-  const handleCreateNewOrder = (e: React.FormEvent) => {
+  const handleCreateNewOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newDomainName) return;
 
     const fullDomain = newDomainName.toLowerCase().endsWith('.com') ? newDomainName : `${newDomainName}.com`;
-    const newOrder: DomainOrderRequest = {
-      id: `DORD-${Math.floor(104 + Math.random() * 890)}`,
-      ticketNumber: `REQ-DOM-${Math.floor(104 + Math.random() * 890)}`,
-      telegramId: newTelegramId || '0',
-      requesterName: newRequesterName || 'Member',
-      domainName: fullDomain,
-      domainExt: '.com',
-      priceIdr: 170000,
-      status: 'waiting_payment',
-      whoisStatus: 'available',
-      nameservers: ['Menunggu Verifikasi Pembayaran'],
-      cloudflareDnsProxy: false,
-      notes: 'Order baru via backoffice. Menunggu konfirmasi pembayaran Rp 170.000.',
-      createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-      updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-    };
 
-    saveDomainOrder(newOrder);
-    const updated = [newOrder, ...ordersList];
-    setOrdersList(updated);
-    onUpdateOrders(updated);
-    setNewOrderModal(false);
-    setNewDomainName('');
-    setNewRequesterName('');
-    setNewTelegramId('');
-    onToast(`Order domain ${fullDomain} (Rp 170.000) berhasil didaftarkan.`, 'success');
+    // 1. Create via the real backend pipeline (create_domain_request_ticket RPC).
+    //    Real errors (e.g. UNREGISTERED_USER, DUPLICATE_REQUEST) surface honestly.
+    try {
+      const res = await api<any>('/domain-orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          telegram_user_id: Number(newTelegramId || 0),
+          requested_domain: fullDomain,
+          requester_name: newRequesterName || 'Member',
+          notes: 'Order domain baru via Backoffice.'
+        })
+      });
+      setNewOrderModal(false);
+      setNewDomainName('');
+      setNewRequesterName('');
+      setNewTelegramId('');
+      onToast(`Order domain ${fullDomain} diterima oleh backend (ticket ${res?.ticket?.ticket_number || ''}).`, 'success');
+      // Refresh from server truth.
+      try {
+        const rows = await api<any[]>('/domain-orders');
+        if (Array.isArray(rows) && rows.length > 0) {
+          const mapped = rows.map(mapRealTicket);
+          setOrdersList(mapped);
+          onUpdateOrders(mapped);
+        }
+      } catch (_) { /* refresh best-effort */ }
+      return;
+    } catch (err: any) {
+      onToast(`Backend menolak order: ${err?.message || 'Order gagal'}.`, 'error');
+      return;
+    }
   };
 
   return (
@@ -4747,7 +5048,7 @@ function MemberInventoryView({ inventories: initialInventories, onUpdateInventor
   const [bankAccount, setBankAccount] = useState('');
   const [domainCount, setDomainCount] = useState('1');
   const [domainsText, setDomainsText] = useState('');
-  const [credentials, setCredentials] = useState('');
+  const [credentialsText, setCredentialsText] = useState('');
 
   const filtered = useMemo(() => {
     return inventoriesList.filter(m => {
@@ -4928,12 +5229,21 @@ function MemberInventoryView({ inventories: initialInventories, onUpdateInventor
               </div>
             </div>
 
-            {/* Vault Credentials Note */}
+            {/* Vault Credentials Note — per-domain credentials */}
             <div className="text-xs bg-black/40 p-2.5 rounded-xl border border-white/5 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Key size={13} className="text-amber-400 shrink-0" />
-                <span className="text-slate-400 text-[11px]">Kredensial / User-Pass:</span>
-                <span className="text-slate-200 font-mono text-[11px] font-bold">{item.accountCredentials}</span>
+              <div className="flex flex-wrap gap-1 items-center">
+                {
+                  (item.domainCredentials && item.domainCredentials.length > 0)
+                    ? item.domainCredentials.map((cred, ci) => (
+                      <span key={ci} className="inline-flex items-center gap-1 text-slate-200 font-mono text-[11px]">
+                        <Key size={10} className="text-amber-400 shrink-0" />
+                        <span className="whitespace-nowrap">{cred.domain}</span>
+                        <span className="text-slate-400">/</span>
+                        <span className="text-slate-300">{cred.user}</span>
+                      </span>
+                    ))
+                    : <span className="text-slate-500 text-[11px]">-</span>
+                }
               </div>
               <span className="text-[10px] text-slate-500 font-mono">Diverifikasi: {item.verifiedBy || 'System'}</span>
             </div>
@@ -5212,15 +5522,38 @@ function SecuritySettingsView({ onToast }: { onToast: (msg: string, t?: 'success
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
+    // Persist local preference. NOTE: secrets (TELEGRAM_BOT_TOKEN, SUPABASE_*, CLOUDFLARE_*)
+    // are NOT stored in the browser. They live as server environment variables.
+    // The UI reflects only the locally saved dispatch target.
     localStorage.setItem('abiedien_admin_chat_id', adminChatId);
     setTimeout(() => {
       setIsSaving(false);
-      onToast('Pengaturan Keamanan & Notifikasi Private Admin berhasil disimpan ke Environment!', 'success');
-    }, 400);
+      onToast(
+        'Target notifikasi disimpan lokal. Token API & kredensial diatur di dashboard server (Supabase/Cloudflare), bukan dari sini.',
+        'success'
+      );
+    }, 350);
   };
 
-  const handleTestAdminAlert = () => {
-    onToast('Pesan Uji Coba Notifikasi Private Admin Terkirim ke ID: ' + (adminChatId || 'Default Super Admin'), 'success');
+  const handleTestAdminAlert = async () => {
+    const targetChatId = (adminChatId.trim() || getConfiguredAdminIds()[0] || '').trim();
+    if (!targetChatId) {
+      onToast('Isi Telegram Chat ID target dulu (atau ID admin sudah dikonfigurasi).', 'error');
+      return;
+    }
+    try {
+      await sendTelegramNotification(
+        targetChatId,
+        '🔔 Uji coba notifikasi Private Admin dari Backoffice. Jika Anda membaca ini, saluran berfungsi.',
+        'admin_private'
+      );
+      onToast(
+        `Permintaan notifikasi uji dikirim ke backend untuk ID ${targetChatId}. Status hasilnya terlihat di log pengiriman / Bot Status.`,
+        'success'
+      );
+    } catch (err: any) {
+      onToast(`Gagal mengirim: ${err?.message || 'terjadi kesalahan di backend'}.`, 'error');
+    }
   };
 
   return (
@@ -5441,10 +5774,10 @@ function TelegramLiveHub({ tickets, users, onSelectTicket, onExecuteSuccess }: {
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-[calc(100vh-140px)] animate-fade-in">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 min-h-0 h-[calc(100dvh-140px)] animate-fade-in">
       {/* Feed List */}
-      <div className="glass-card rounded-2xl p-3 flex flex-col space-y-2 overflow-y-auto">
-        <div className="flex items-center justify-between pb-2 border-b border-white/5">
+      <div className="glass-card rounded-2xl p-3 flex flex-col min-h-0 min-w-0 space-y-2">
+        <div className="flex items-center justify-between pb-2 border-b border-white/5 shrink-0">
           <span className="text-xs font-bold text-white flex items-center gap-1.5">
             <Radio size={14} className="text-blue-400" />
             Live Incoming Stream
@@ -5452,7 +5785,7 @@ function TelegramLiveHub({ tickets, users, onSelectTicket, onExecuteSuccess }: {
           <span className="text-[10px] text-slate-500 font-mono-code">{liveFeeds.length} Active</span>
         </div>
 
-        <div className="space-y-1.5 flex-1">
+        <div className="space-y-1.5 flex-1 min-h-0 overflow-y-auto overscroll-contain pr-1" style={{ WebkitOverflowScrolling: 'touch' }}>
           {liveFeeds.map(feed => {
             const isSelected = feed.ticket_id === selectedChat;
             return (
@@ -5480,9 +5813,9 @@ function TelegramLiveHub({ tickets, users, onSelectTicket, onExecuteSuccess }: {
       </div>
 
       {/* Main Conversation & Decision Console */}
-      <div className="lg:col-span-2 glass-card rounded-2xl p-4 flex flex-col justify-between space-y-4">
+      <div className="lg:col-span-2 glass-card rounded-2xl p-4 flex flex-col min-h-0 min-w-0 space-y-4">
         {/* Header Console */}
-        <div className="p-3.5 rounded-xl bg-black/40 border border-white/10 space-y-2.5">
+        <div className="p-3.5 rounded-xl bg-black/40 border border-white/10 space-y-2.5 shrink-0">
           <div className="flex items-center justify-between">
             <div>
               <span className="text-[9px] font-bold uppercase text-slate-400 tracking-wider block">IDENTIFIED MEMBER & INTENT</span>
@@ -5563,7 +5896,7 @@ function TelegramLiveHub({ tickets, users, onSelectTicket, onExecuteSuccess }: {
         </div>
 
         {/* Conversation Message Feed */}
-        <div className="space-y-3 flex-1 overflow-y-auto p-2">
+        <div className="space-y-3 flex-1 min-h-0 overflow-y-auto overscroll-contain p-2">
           {currentFeed.messages.map((msg, idx) => (
             <div key={idx} className={`flex flex-col ${msg.sender === 'member' ? 'items-start' : 'items-end'}`}>
               <span className="text-[9px] text-slate-500 uppercase font-bold mb-1">
@@ -5579,7 +5912,7 @@ function TelegramLiveHub({ tickets, users, onSelectTicket, onExecuteSuccess }: {
         </div>
 
         {/* Admin Reply Box */}
-        <form onSubmit={handleAdminSend} className="flex items-center gap-2 pt-2 border-t border-white/5">
+        <form onSubmit={handleAdminSend} className="flex items-center gap-2 pt-2 border-t border-white/5 shrink-0">
           <input 
             type="text" 
             value={adminInput}
@@ -5629,8 +5962,8 @@ function TelegramBotSimulator() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto glass-card rounded-3xl p-5 sm:p-6 space-y-4 animate-fade-in flex flex-col h-[calc(100vh-140px)]">
-      <div className="flex items-center justify-between pb-3 border-b border-white/10">
+    <div className="max-w-2xl mx-auto glass-card rounded-3xl p-5 sm:p-6 space-y-4 animate-fade-in flex flex-col min-h-0 min-w-0 h-[calc(100dvh-140px)]">
+      <div className="flex items-center justify-between pb-3 border-b border-white/10 shrink-0">
         <div className="flex items-center gap-2">
           <Terminal size={18} className="text-cyan-400" />
           <h3 className="text-sm font-extrabold text-white">Bot FSM State Machine Simulator</h3>
@@ -5640,7 +5973,7 @@ function TelegramBotSimulator() {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto space-y-3 p-2">
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-3 p-2">
         {messages.map((m, idx) => (
           <div key={idx} className={`flex flex-col ${m.sender === 'user' ? 'items-end' : 'items-start'}`}>
             <div className={`p-3 rounded-2xl max-w-md text-xs leading-relaxed ${
@@ -5652,7 +5985,7 @@ function TelegramBotSimulator() {
         ))}
       </div>
 
-      <form onSubmit={handleSimulate} className="flex items-center gap-2 pt-2 border-t border-white/5">
+      <form onSubmit={handleSimulate} className="flex items-center gap-2 pt-2 border-t border-white/5 shrink-0">
         <input 
           type="text" 
           value={input}
@@ -5780,7 +6113,7 @@ function DetailDrawer({ data, close, onMutateSuccess }: { data: any; close: () =
   };
 
   return (
-    <div className="fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:top-auto max-sm:max-h-[90vh] max-sm:rounded-t-3xl max-sm:animate-slide-up sm:inset-y-0 sm:right-0 z-50 w-full sm:max-w-lg glass-sidebar p-5 sm:p-6 flex flex-col shadow-2xl border-t sm:border-t-0 sm:border-l border-white/10 overflow-y-auto safe-bottom">
+    <div className="fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:top-auto max-sm:max-h-[90dvh] max-sm:rounded-t-3xl max-sm:animate-slide-up sm:inset-y-0 sm:right-0 z-[70] w-full sm:max-w-lg glass-sidebar p-5 sm:p-6 flex flex-col min-h-0 shadow-2xl border-t sm:border-t-0 sm:border-l border-white/10 safe-bottom">
       {/* Mobile Drag Pill */}
       <div className="drag-indicator sm:hidden mb-3" />
 
@@ -5796,7 +6129,7 @@ function DetailDrawer({ data, close, onMutateSuccess }: { data: any; close: () =
         </button>
       </div>
 
-      <div className="py-4 space-y-4 flex-1">
+      <div className="py-4 space-y-4 flex-1 min-h-0 overflow-y-auto overscroll-contain pr-1" style={{ WebkitOverflowScrolling: 'touch' }}>
         {/* DOMAIN & SUBDOMAIN RECORD INSPECTOR */}
         {isDomain && (
           <div className="space-y-4">
@@ -6731,7 +7064,65 @@ function TelegramBotView({ onSelect }: { onSelect: (v: any) => void }) {
         </div>
         <div className="space-y-1">
           <h3 className="text-xl font-extrabold text-white">Telegram Bot & WebApp Controller</h3>
-          <p className="text-xs text-slate-400">Pusat konfigurasi bot (@sandekalabot), Mini App WebApp, Webhook Edge, dan integrasi perintah</p>
+          <p className="text-xs text-slate-400">Pusat konfigurasi bot (@sandekalabot & @mrssandebot), Mini App WebApp, Webhook Edge, dan integrasi perintah</p>
+        </div>
+      </div>
+
+      {/* BOT ADMIN STRUCTURE */}
+      <div className="glass-card rounded-3xl p-6 space-y-4 border border-purple-500/20">
+        <div className="flex items-center gap-2 text-sm font-extrabold text-white">
+          <Crown size={18} className="text-purple-400" />
+          <span>Struktur Bot & Admin Telegram</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+          <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 space-y-1">
+            <div className="flex items-center gap-2">
+              <Bot size={14} className="text-purple-400" />
+              <span className="font-bold text-purple-300">@sandekalabot</span>
+            </div>
+            <span className="text-[10px] text-slate-400 block">Super Admin Bot Utama</span>
+            <span className="text-[10px] text-amber-300 block">Role: super_admin</span>
+          </div>
+          <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 space-y-1">
+            <div className="flex items-center gap-2">
+              <Bot size={14} className="text-purple-400" />
+              <span className="font-bold text-purple-300">@mrssandebot</span>
+            </div>
+            <span className="text-[10px] text-slate-400 block">Bot Payment & Payroll</span>
+            <span className="text-[10px] text-amber-300 block">Role: super_admin</span>
+          </div>
+          <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 space-y-1">
+            <div className="flex items-center gap-2">
+              <Bot size={14} className="text-blue-400" />
+              <span className="font-bold text-blue-300">@felixsnd</span>
+            </div>
+            <span className="text-[10px] text-slate-400 block">Admin Operations</span>
+            <span className="text-[10px] text-amber-300 block">Role: admin</span>
+          </div>
+          <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 space-y-1">
+            <div className="flex items-center gap-2">
+              <Bot size={14} className="text-cyan-400" />
+              <span className="font-bold text-cyan-300">@Sandeteam</span>
+            </div>
+            <span className="text-[10px] text-slate-400 block">Developer & Engineering</span>
+            <span className="text-[10px] text-amber-300 block">Role: dev</span>
+          </div>
+          <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 space-y-1">
+            <div className="flex items-center gap-2">
+              <Bot size={14} className="text-emerald-400" />
+              <span className="font-bold text-emerald-300">@asiangaming11</span>
+            </div>
+            <span className="text-[10px] text-slate-400 block">Operator & Payment</span>
+            <span className="text-[10px] text-amber-300 block">Role: operator</span>
+          </div>
+          <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 space-y-1">
+            <div className="flex items-center gap-2">
+              <Bot size={14} className="text-amber-400" />
+              <span className="font-bold text-amber-300">@rianbayubastian</span>
+            </div>
+            <span className="text-[10px] text-slate-400 block">Forum & Community Group</span>
+            <span className="text-[10px] text-amber-300 block">Role: operator</span>
+          </div>
         </div>
       </div>
 
@@ -6971,6 +7362,7 @@ function UniversalAuthView({ email, password, setEmail, setPassword, loading, er
                   type="email" 
                   value={email} 
                   onChange={e => setEmail(e.target.value)} 
+                  placeholder="admin@yourdomain.com"
                   className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-rose-500/50" 
                   required
                 />
@@ -6981,6 +7373,8 @@ function UniversalAuthView({ email, password, setEmail, setPassword, loading, er
                   type="password" 
                   value={password} 
                   onChange={e => setPassword(e.target.value)} 
+                  placeholder="••••••••••••"
+                  autoComplete="current-password"
                   className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-rose-500/50" 
                   required
                 />
@@ -7284,8 +7678,172 @@ function UniversalAuthView({ email, password, setEmail, setPassword, loading, er
   );
 }
 
+// ==========================================
+// MEMBER REQUEST PAGE (Kendala / Update) — creates a REAL ticket via POST /tickets
+// ==========================================
+function MemberRequestTicketPage({ category, pageTitle, pageDesc, pageIcon, accent, priorityOptions, onCreated, showToast }: {
+  category: string;
+  pageTitle: string;
+  pageDesc: string;
+  pageIcon: React.ReactNode;
+  accent: string;
+  priorityOptions: Array<{ value: string; label: string }>;
+  onCreated: () => void;
+  showToast: (msg: string, type?: 'success' | 'error') => void;
+}) {
+  const [subject, setSubject] = useState('');
+  const [detail, setDetail] = useState('');
+  const [priority, setPriority] = useState('medium');
+  const [busy, setBusy] = useState(false);
+  const [created, setCreated] = useState<any | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!subject.trim() || !detail.trim()) return;
+    setBusy(true);
+    try {
+      const res = await api<any>('/tickets', {
+        method: 'POST',
+        body: JSON.stringify({ category, title: subject.trim(), description: detail.trim(), priority })
+      });
+      setCreated(res?.ticket || { title: subject.trim(), status: 'pending' });
+      setSubject('');
+      setDetail('');
+      showToast(res?.message || 'Permintaan berhasil dikirim sebagai tiket resmi.', 'success');
+      onCreated();
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal mengirim permintaan. Coba lagi.', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="glass-card p-6 sm:p-8 rounded-3xl border border-white/10 space-y-5 animate-fade-in max-w-2xl mx-auto">
+      <div className="flex items-center gap-3 pb-3 border-b border-white/10">
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${accent}`}>{pageIcon}</div>
+        <div>
+          <h3 className="text-base font-black text-white">{pageTitle}</h3>
+          <p className="text-[11px] text-slate-400">{pageDesc}</p>
+        </div>
+      </div>
+
+      {created && (
+        <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-200 space-y-1">
+          <span className="font-bold block">✅ Tiket resmi dibuat: #{created.ticket_number || '—'}</span>
+          <span className="text-[11px] text-slate-300">Status: <strong>{String(created.status || 'pending').toUpperCase()}</strong>. Admin akan menindaklanjuti dalam SLA &lt; 30 menit untuk kasus kritis.</span>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-1">
+          <label className="text-xs font-semibold text-slate-300 block">Judul Permintaan:</label>
+          <input
+            type="text"
+            required
+            value={subject}
+            onChange={e => setSubject(e.target.value)}
+            placeholder="Ringkas masalah / kebutuhan Anda"
+            className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-xs font-semibold text-slate-300 block">Detail / Penjelasan:</label>
+          <textarea
+            required
+            rows={5}
+            value={detail}
+            onChange={e => setDetail(e.target.value)}
+            placeholder="Jelaskan kendala / perubahan yang diminta, sertakan domain & langkah yang sudah dicoba."
+            className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 resize-y"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-xs font-semibold text-slate-300 block">Prioritas:</label>
+          <div className="flex gap-2 flex-wrap">
+            {priorityOptions.map(o => (
+              <button
+                type="button"
+                key={o.value}
+                onClick={() => setPriority(o.value)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                  priority === o.value
+                    ? 'bg-cyan-600 text-white border-cyan-400'
+                    : 'bg-white/5 text-slate-400 border-white/10 hover:text-white'
+                }`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          disabled={busy}
+          className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs shadow-glow-cyan transition cursor-pointer disabled:opacity-50"
+        >
+          {busy ? 'Mengirim...' : 'Kirim Permintaan (Buat Tiket Resmi)'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 function MemberPortalView({ name, telegramId, tickets: initialTickets, payments, domains: initialDomains, onLogout, onRefresh, showToast }: any) {
-  const [memberTab, setMemberTab] = useState<'overview' | 'order_domain' | 'claim_gaji' | 'my_inventory' | 'tickets' | 'forum' | 'traffic' | 'sla_rules'>('overview');
+  // ============ ROUTED MEMBER PAGES (hash-based, deep-linkable) ============
+  // Each member page has its own URL so it can be bookmarked / shared:
+  //   #/portal            -> overview (status domain)
+  //   #/portal/domain     -> order domain
+  //   #/portal/kendala    -> request kendala (real ticket)
+  //   #/portal/update     -> request update (real ticket)
+  //   #/portal/pembayaran -> payment ledger + transfer info
+  //   #/portal/klaim|inventory|tiket|forum|traffic|sla
+  const MEMBER_PAGE_SLUGS: Record<string, string> = {
+    overview: '',
+    order_domain: 'domain',
+    kendala: 'kendala',
+    request_update: 'update',
+    pembayaran: 'pembayaran',
+    claim_gaji: 'klaim',
+    my_inventory: 'inventory',
+    tickets: 'tiket',
+    forum: 'forum',
+    traffic: 'traffic',
+    sla_rules: 'sla'
+  };
+  const SLUG_TO_TAB: Record<string, string> = Object.entries(MEMBER_PAGE_SLUGS).reduce((acc, [tab, slug]) => {
+    if (slug) acc[slug] = tab;
+    else acc[''] = tab;
+    return acc;
+  }, {} as Record<string, string>);
+
+  const tabFromHash = (): string => {
+    const h = window.location.hash.replace(/^#\/?portal\/?/, '');
+    return SLUG_TO_TAB[h] || 'overview';
+  };
+
+  const [memberTab, setMemberTab] = useState<string>(tabFromHash);
+
+  // Sync tab -> URL, and URL -> tab (back/forward support)
+  useEffect(() => {
+    const slug = MEMBER_PAGE_SLUGS[memberTab] ?? '';
+    const expected = slug ? `#/portal/${slug}` : '#/portal';
+    if (window.location.hash !== expected) {
+      window.history.replaceState(null, '', expected);
+    }
+  }, [memberTab]);
+
+  useEffect(() => {
+    const onHash = () => {
+      const next = tabFromHash();
+      setMemberTab(next);
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && (window as any).Telegram?.WebApp) {
@@ -7364,14 +7922,19 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
       bankAccount: '8820192831',
       domainCount: 2,
       domainList: ['kopimax.com', 'zeusgacor77.com'],
-      accountCredentials: 'User: member_ops / NS Cloudflare Anycast',
+      domainCredentials: [
+        { domain: 'kopimax.com', user: 'member_ops', pass: '••••••••' },
+        { domain: 'zeusgacor77.com', user: 'member_ops', pass: '••••••••' }
+      ],
       status: 'active',
       registeredAt: new Date().toISOString().substring(0, 10),
       verifiedBy: 'System Auto-Root',
     };
   });
   const [invDomainsText, setInvDomainsText] = useState(myInventory.domainList.join('\n'));
-  const [invCredentials, setInvCredentials] = useState(myInventory.accountCredentials);
+  const [invCredentialsText, setInvCredentialsText] = useState(
+    myInventory.domainCredentials.map(c => `${c.domain} | ${c.user} | ${c.pass}`).join('\n')
+  );
   const [invPhone, setInvPhone] = useState(myInventory.phoneWhatsapp);
   const [invBank, setInvBank] = useState(myInventory.bankName);
   const [invAccount, setInvAccount] = useState(myInventory.bankAccount);
@@ -7467,7 +8030,7 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
     reader.readAsDataURL(file);
   };
 
-  // Handle Submit Claim Gaji
+  // Handle Submit Claim Gaji (75% System)
   const handleSubmitClaim = (e: React.FormEvent) => {
     e.preventDefault();
     if (!claimAmount || !claimAccount) {
@@ -7475,19 +8038,23 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
       return;
     }
 
+    const amount = Number(claimAmount);
+    const claim75Percent = Math.floor(amount * 0.75);
+    const platformFee = amount - claim75Percent;
+
     setClaimSubmitting(true);
     setTimeout(() => {
       setClaimSubmitting(false);
       const newClaimTicket = {
         id: Math.floor(800 + Math.random() * 199),
-        title: `Klaim Transfer Gaji: Rp ${Number(claimAmount).toLocaleString('id-ID')} ke ${claimBank} ${claimAccount}`,
+        title: `Klaim Transfer Gaji (75%): Rp ${claim75Percent.toLocaleString('id-ID')} ke ${claimBank} ${claimAccount}`,
         category: 'payroll_claim',
         priority: 'high',
         status: 'pending',
         created_at: new Date().toISOString(),
         user_name: name,
         user_id: telegramId,
-        notes: `Klaim transfer gaji Rp ${Number(claimAmount).toLocaleString('id-ID')}. Bank: ${claimBank}, Rekening: ${claimAccount}. Lampiran: ${claimAttachmentName || 'Bukti Screenshot terlampir'}. Deskripsi: ${claimDesc || '-'}`
+        notes: `Klaim gaji dengan sistem 75%. Total: Rp ${amount.toLocaleString('id-ID')}, Diterima (75%): Rp ${claim75Percent.toLocaleString('id-ID')}, Platform Fee (25%): Rp ${platformFee.toLocaleString('id-ID')}. Bank: ${claimBank}, Rekening: ${claimAccount}. Lampiran: ${claimAttachmentName || 'Bukti Screenshot terlampir'}. Deskripsi: ${claimDesc || '-'}`
       };
 
       setMemberTickets([newClaimTicket, ...memberTickets]);
@@ -7496,7 +8063,7 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
       setClaimAttachment(null);
       setClaimAttachmentName('');
       setClaimAttachmentSize('');
-      showToast(`Klaim transfer gaji berhasil diajukan! Notifikasi dikirimkan ke Super Admin.`, 'success');
+      showToast(`Klaim gaji berhasil diajukan! Sistem 75%: Rp ${claim75Percent.toLocaleString('id-ID')} akan ditransfer ke rekening Anda.`, 'success');
     }, 600);
   };
 
@@ -7504,6 +8071,16 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
   const handleSaveInventoryUpdate = (e: React.FormEvent) => {
     e.preventDefault();
     const dList = invDomainsText.split(/[\n,]+/).map(d => d.trim()).filter(Boolean);
+    const credList: DomainCredential[] = invCredentialsText
+      .split('\n')
+      .map(line => {
+        const parts = line.split('|').map(p => p.trim());
+        if (parts.length >= 3 && parts[0]) {
+          return { domain: parts[0], user: parts[1], pass: parts[2] };
+        }
+        return null;
+      })
+      .filter((c): c is DomainCredential => c !== null && c.domain && c.user && c.pass);
     const updated: MemberDomainInventory = {
       ...myInventory,
       phoneWhatsapp: invPhone,
@@ -7511,7 +8088,7 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
       bankAccount: invAccount,
       domainCount: dList.length,
       domainList: dList,
-      accountCredentials: invCredentials,
+      domainCredentials: credList.length ? credList : myInventory.domainCredentials,
       registeredAt: new Date().toISOString().substring(0, 10),
     };
     setMyInventory(updated);
@@ -7595,10 +8172,13 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
         <div className="p-1 rounded-2xl bg-black/40 border border-white/10 flex items-center gap-1 overflow-x-auto text-xs">
           {[
             { id: 'overview', label: '🌐 Status Domain', icon: Globe2 },
-            { id: 'order_domain', label: '🛒 Order .com (Rp 170k)', icon: Globe2 },
-            { id: 'claim_gaji', label: '💳 Klaim Gaji & Upload SS', icon: CreditCard },
+            { id: 'order_domain', label: '🛒 Req Domain', icon: Globe2 },
+            { id: 'kendala', label: '⚠️ Req Kendala', icon: AlertTriangle },
+            { id: 'request_update', label: '🔄 Req Update', icon: RefreshCw },
+            { id: 'pembayaran', label: '💳 Pembayaran', icon: CreditCard },
+            { id: 'claim_gaji', label: '💰 Klaim Gaji', icon: CreditCard },
             { id: 'my_inventory', label: '📦 Gudang & Daftar Ulang', icon: Database },
-            { id: 'tickets', label: '🎫 Tiket Kendala', icon: LifeBuoy, count: memberTickets.filter(t => t.status === 'pending' || t.status === 'in_progress').length },
+            { id: 'tickets', label: '🎫 Tiket Saya', icon: LifeBuoy, count: memberTickets.filter(t => t.status === 'pending' || t.status === 'in_progress').length },
             { id: 'forum', label: '💬 Forum Komunitas', icon: MessageSquare },
             { id: 'traffic', label: '📊 Trafik Program', icon: Activity },
             { id: 'sla_rules', label: '📜 SOP & SLA', icon: ShieldCheck },
@@ -7675,6 +8255,91 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* ROUTED PAGE: REQUEST KENDALA (real ticket via POST /tickets) */}
+        {memberTab === 'kendala' && (
+          <MemberRequestTicketPage
+            category="web_update"
+            pageTitle="⚠️ Laporkan Kendala Web"
+            pageDesc="Domain mati, DNS error, SSL invalid, atau layanan tidak responsif. Langsung dibuat tiket resmi."
+            pageIcon={<AlertTriangle size={20} />}
+            accent="bg-amber-500/20 text-amber-300"
+            priorityOptions={[
+              { value: 'high', label: '🔴 Kritis (domain mati)' },
+              { value: 'medium', label: '🟡 Normal' },
+              { value: 'low', label: '🟢 Rendah' }
+            ]}
+            onCreated={onRefresh}
+            showToast={showToast}
+          />
+        )}
+
+        {/* ROUTED PAGE: REQUEST UPDATE (real ticket via POST /tickets) */}
+        {memberTab === 'request_update' && (
+          <MemberRequestTicketPage
+            category="web_update"
+            pageTitle="🔄 Ajukan Update Web"
+            pageDesc="Permintaan perubahan konten, sitemap, redirect 301, cache purge, atau konfigurasi CDN."
+            pageIcon={<RefreshCw size={20} />}
+            accent="bg-cyan-500/20 text-cyan-300"
+            priorityOptions={[
+              { value: 'medium', label: '🟡 Normal' },
+              { value: 'low', label: '🟢 Rendah' }
+            ]}
+            onCreated={onRefresh}
+            showToast={showToast}
+          />
+        )}
+
+        {/* ROUTED PAGE: PEMBAYARAN (member payment ledger + transfer destination) */}
+        {memberTab === 'pembayaran' && (
+          <div className="space-y-4 animate-fade-in">
+            <div className="glass-card p-5 sm:p-6 rounded-3xl border border-amber-500/20 space-y-3">
+              <div className="flex items-center gap-2 text-amber-400 text-xs font-bold uppercase tracking-wider">
+                <CreditCard size={16} />
+                Destinasi Pembayaran Resmi
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div className="p-3 rounded-xl bg-black/40 border border-white/5">
+                  <span className="text-slate-400 block text-[10px] font-bold uppercase">Bank</span>
+                  <strong className="text-white">Bank Mandiri</strong>
+                </div>
+                <div className="p-3 rounded-xl bg-black/40 border border-white/5">
+                  <span className="text-slate-400 block text-[10px] font-bold uppercase">Nama Rekening</span>
+                  <strong className="text-white">AISAH</strong>
+                </div>
+                <div className="p-3 rounded-xl bg-black/40 border border-amber-500/30">
+                  <span className="text-slate-400 block text-[10px] font-bold uppercase">Nomor Rekening</span>
+                  <strong className="text-amber-300 font-mono-code">1830007183303</strong>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Setelah transfer, wajib kirim bukti (screenshot, maks 5MB) melalui tab <strong>Klaim Gaji</strong> atau bot Telegram dengan format <code className="font-mono-code text-amber-300">BUKTI#domain</code>.
+              </p>
+            </div>
+
+            <div className="glass-card p-5 sm:p-6 rounded-3xl border border-white/10">
+              <h3 className="text-sm font-black text-white mb-3">Riwayat Pembayaran Anda</h3>
+              {(payments || []).length === 0 ? (
+                <p className="text-xs text-slate-400">Belum ada riwayat pembayaran tercatat untuk akun Anda.</p>
+              ) : (
+                <div className="space-y-2">
+                  {(payments || []).map((p: any) => (
+                    <div key={p.id} className="p-3 rounded-xl bg-black/30 border border-white/5 flex items-center justify-between text-xs">
+                      <span className="font-mono-code text-white font-bold">{p.payment_number || `#${p.id}`}</span>
+                      <span className="text-emerald-300 font-bold font-mono-code">{p.currency || 'IDR'} {Number(p.amount).toLocaleString('id-ID')}</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${
+                        p.status === 'verified' ? 'bg-emerald-500/20 text-emerald-300' :
+                        p.status === 'rejected' ? 'bg-rose-500/20 text-rose-300' :
+                        'bg-amber-500/20 text-amber-300'
+                      }`}>{String(p.status || 'pending').toUpperCase()}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -7756,7 +8421,7 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
                 <div className="text-sm font-black text-white font-mono">
                   Total: Rp {(DOMAIN_PRICES[orderDomainExt as keyof typeof DOMAIN_PRICES] || 170000).toLocaleString('id-ID')} / tahun
                 </div>
-                <p className="text-[11px] text-slate-400">Transfer ke Rekening BCA: 8820192831 a/n PT Abiedien Network.</p>
+                <p className="text-[11px] text-slate-400">Transfer ke Rekening Bank Mandiri: 1830007183303 a/n AISAH.</p>
               </div>
 
               <button
@@ -7770,7 +8435,7 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
           </div>
         )}
 
-        {/* TAB 3: KLAIM GAJI & UPLOAD BUKTI TRANSFER */}
+        {/* TAB 3: KLAIM GAJI & UPLOAD BUKTI TRANSFER (75% System) */}
         {memberTab === 'claim_gaji' && (
           <div className="glass-card p-6 sm:p-8 rounded-3xl border border-white/10 space-y-5 animate-fade-in max-w-2xl mx-auto">
             <div className="flex items-center gap-3 pb-3 border-b border-white/10">
@@ -7779,8 +8444,23 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
               </div>
               <div>
                 <h3 className="text-base font-black text-white">Form Pengajuan Transfer Gaji & Payroll</h3>
-                <p className="text-xs text-slate-400">Lampirkan screenshot/bukti sah (Max 5MB). Notifikasi privat ke Super Admin.</p>
+                <p className="text-xs text-slate-400">Sistem 75% — Anda menerima 75% dari total klaim. Lampirkan bukti transfer (Max 5MB).</p>
               </div>
+            </div>
+
+            {/* 75% System Info Banner */}
+            <div className="p-3 rounded-xl bg-gradient-to-r from-emerald-500/10 to-cyan-500/10 border border-emerald-500/30 text-xs space-y-1.5">
+              <div className="flex items-center gap-2 text-emerald-300 font-bold">
+                <Sparkles size={14} />
+                <span>Sistem Klaim Gaji 75%</span>
+              </div>
+              <p className="text-[11px] text-slate-300">
+                Setiap klaim gaji akan diproses dengan sistem 75%: Anda menerima 75% dari total nominal klaim, 
+                dan 25% adalah biaya platform & operasional. Klaim diproses setiap minggu.
+              </p>
+              <p className="text-[10px] text-amber-300">
+                ⚠️ Domain yang tidak aktif/update selama 1 minggu akan dibekukan dan perlu pembayaran ulang untuk domain baru.
+              </p>
             </div>
 
             <form onSubmit={handleSubmitClaim} className="space-y-4 text-xs">
@@ -7795,6 +8475,22 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
                     onChange={(e) => setClaimAmount(e.target.value)}
                     className="w-full h-10 px-3.5 rounded-xl bg-white/5 border border-white/10 text-white font-mono text-xs focus:outline-none focus:border-cyan-500"
                   />
+                  {claimAmount && Number(claimAmount) > 0 && (
+                    <div className="mt-1 p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-[10px]">
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Total Klaim:</span>
+                        <span className="text-white font-bold">Rp {Number(claimAmount).toLocaleString('id-ID')}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Anda Terima (75%):</span>
+                        <span className="text-emerald-300 font-bold">Rp {Math.floor(Number(claimAmount) * 0.75).toLocaleString('id-ID')}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Platform Fee (25%):</span>
+                        <span className="text-amber-300 font-bold">Rp {Math.floor(Number(claimAmount) * 0.25).toLocaleString('id-ID')}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -7809,7 +8505,10 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
                     <option value="BRI" className="bg-slate-900">BRI</option>
                     <option value="BNI" className="bg-slate-900">BNI</option>
                     <option value="CIMB" className="bg-slate-900">CIMB</option>
+                    <option value="SEA_BANK" className="bg-slate-900">Sea Bank</option>
                     <option value="DANA" className="bg-slate-900">DANA</option>
+                    <option value="GOPAY" className="bg-slate-900">GoPay</option>
+                    <option value="OVO" className="bg-slate-900">OVO</option>
                   </select>
                 </div>
               </div>
@@ -7943,13 +8642,14 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
 
               <div>
                 <label className="text-xs font-bold text-slate-300 block mb-1.5">
-                  Catatan Kredensial Registrar / User-Password (Vault Aman)
+                  Kredensial per Domain (Format: domain.com | user | pass — satu per baris)
                 </label>
-                <input
-                  type="text"
-                  value={invCredentials}
-                  onChange={(e) => setInvCredentials(e.target.value)}
-                  className="w-full h-10 px-3.5 rounded-xl bg-white/5 border border-white/10 text-white font-mono text-xs focus:outline-none focus:border-cyan-500"
+                <textarea
+                  rows={4}
+                  required
+                  value={invCredentialsText}
+                  onChange={(e) => setInvCredentialsText(e.target.value)}
+                  className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white font-mono text-xs focus:outline-none focus:border-cyan-500 leading-relaxed"
                 />
               </div>
 
@@ -8033,7 +8733,7 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
           <div className="space-y-5 animate-fade-in">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <a
-                href="https://t.me/+AbiedienCommunity"
+                href="https://t.me/+ybOzZ_lstEdhNDU1"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="glass-card p-4 rounded-2xl border border-blue-500/30 hover:border-blue-500/60 hover:bg-blue-500/10 transition group flex items-center justify-between"
@@ -8181,6 +8881,12 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
                 <p className="text-xs text-slate-300 leading-relaxed">
                   Domain berbayar (.com Rp 170k, .net Rp 195k) diaktifkan setelah konfirmasi administrasi transfer bank selesai dan telah di-ACC oleh Admin.
                 </p>
+                <div className="mt-2 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] space-y-1">
+                  <span className="font-bold text-amber-300 block">💳 Destinasi Pembayaran (Transfer Bank):</span>
+                  <span className="text-slate-200">Bank: <strong>Bank Mandiri</strong></span>
+                  <span className="text-slate-200">Nama Rekening: <strong>AISAH</strong></span>
+                  <span className="text-slate-200">Nomor Rekening: <strong className="font-mono-code text-amber-300">1830007183303</strong></span>
+                </div>
               </div>
 
               <div className="glass-card p-5 rounded-2xl border border-white/10 space-y-2.5">
@@ -8376,8 +9082,8 @@ function EmergencyMenuModal({ close, onActionExecuted }: { close: () => void; on
     },
     {
       id: 'panic_broadcast' as const,
-      name: 'Broadcast Darurat ke Grup Member (@mrssandebot)',
-      desc: 'Kirim notifikasi pengumuman darurat instan ke grup member (t.me/+ybOzZ_lstEdhNDU1) & bot admin (@sandekalabot).',
+      name: 'Broadcast Darurat ke Semua Bot & Grup',
+      desc: 'Kirim notifikasi pengumuman darurat instan ke semua bot (@sandekalabot, @mrssandebot, @felixsnd, @asiangaming11, @rianbayubastian) & grup member (t.me/+ybOzZ_lstEdhNDU1).',
       icon: Radio,
       color: 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300',
       btnColor: 'bg-cyan-600 hover:bg-cyan-500 text-white'
@@ -8464,7 +9170,7 @@ function EmergencyMenuModal({ close, onActionExecuted }: { close: () => void; on
               </span>
               <p className="text-slate-300 text-[11px]">
                 Aksi: <strong className="text-white">{actions.find(x => x.id === selectedAction)?.name}</strong>.
-                Tindakan ini akan dicatat ke audit log dan disiarkan ke bot @sandekalabot / @mrssandebot.
+                Tindakan ini akan dicatat ke audit log dan disiarkan ke semua bot (@sandekalabot, @mrssandebot, @felixsnd, @asiangaming11, @rianbayubastian).
               </p>
             </div>
 
@@ -8514,6 +9220,117 @@ function EmergencyMenuModal({ close, onActionExecuted }: { close: () => void; on
             </div>
           </form>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ========================================================
+// COMPONENT: COMMAND MENU MODAL - MENU PERINTAH CEPAT
+// ========================================================
+function CommandMenuModal({ close, commandHierarchy, currentUserRole, onExecuteCommand, showToast }: {
+  close: () => void;
+  commandHierarchy: { cmd: string; desc: string; category: string }[];
+  currentUserRole: string;
+  onExecuteCommand: (cmd: string) => void;
+  showToast: (msg: string, type: 'success' | 'error') => void;
+}) {
+  const [filterCategory, setFilterCategory] = useState<string>('all');
+  const [searchCmd, setSearchCmd] = useState('');
+
+  const categories = ['all', ...Array.from(new Set(commandHierarchy.map(c => c.category)))];
+  
+  const isAdmin = ['super_admin', 'admin', 'dev'].includes(currentUserRole);
+
+  const filteredCommands = commandHierarchy.filter(c => {
+    const matchesCategory = filterCategory === 'all' || c.category === filterCategory;
+    const matchesSearch = !searchCmd || c.cmd.toLowerCase().includes(searchCmd.toLowerCase()) || c.desc.toLowerCase().includes(searchCmd.toLowerCase());
+    // Filter admin-only commands
+    if (c.category === 'Admin' && !isAdmin) return false;
+    return matchesCategory && matchesSearch;
+  });
+
+  const handleQuickExecute = (cmd: string) => {
+    onExecuteCommand(cmd);
+  };
+
+  return (
+    <div className="fixed inset-0 z-60 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+      <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between pb-4 border-b border-white/10">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
+              <Terminal size={22} />
+            </div>
+            <div>
+              <h2 className="text-base font-extrabold text-white tracking-tight">Menu Perintah Cepat (/)</h2>
+              <p className="text-xs text-slate-400">Akses fitur cepat dengan perintah</p>
+            </div>
+          </div>
+          <button onClick={close} className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer transition">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Search Input */}
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          <input
+            type="text"
+            value={searchCmd}
+            onChange={e => setSearchCmd(e.target.value)}
+            placeholder="Cari perintah (contoh: /order, /klaim)..."
+            className="w-full h-9 pl-9 pr-4 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500/50"
+          />
+        </div>
+
+        {/* Category Filter */}
+        <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pb-1">
+          {categories.map(cat => (
+            <button
+              key={cat}
+              onClick={() => setFilterCategory(cat)}
+              className={`shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
+                filterCategory === cat
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-white/5 text-slate-400 hover:text-white'
+              }`}
+            >
+              {cat === 'all' ? 'Semua' : cat}
+            </button>
+          ))}
+        </div>
+
+        {/* Command List */}
+        <div className="space-y-1.5">
+          {filteredCommands.length === 0 ? (
+            <div className="text-center text-slate-400 text-xs py-4">Tidak ada perintah ditemukan.</div>
+          ) : (
+            filteredCommands.map((c, idx) => (
+              <button
+                key={idx}
+                onClick={() => handleQuickExecute(c.cmd)}
+                className="w-full p-3 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-indigo-500/10 hover:border-indigo-500/30 text-left transition cursor-pointer flex items-center gap-3 active:scale-98"
+              >
+                <code className="px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-300 text-[11px] font-bold font-mono-code shrink-0">
+                  {c.cmd}
+                </code>
+                <div className="flex-1 min-w-0">
+                  <span className="text-xs text-white block truncate">{c.desc}</span>
+                  <span className="text-[9px] text-slate-500 uppercase tracking-wider">{c.category}</span>
+                </div>
+                <ChevronRight size={14} className="text-slate-500 shrink-0" />
+              </button>
+            ))
+          )}
+        </div>
+
+        {/* Telegram Link */}
+        <div className="pt-3 border-t border-white/5">
+          <p className="text-[10px] text-slate-500 text-center">
+            Telegram: <a href="https://t.me/abiedien_root" target="_blank" rel="noopener" className="text-cyan-400 hover:underline">@abiedien_root</a>
+          </p>
+        </div>
       </div>
     </div>
   );

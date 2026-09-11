@@ -27,24 +27,48 @@ ON public.dashboard_access(user_id);
 CREATE INDEX IF NOT EXISTS idx_dashboard_access_role_active 
 ON public.dashboard_access(role, is_active);
 
--- 3. Enable RLS on dashboard_access
+-- 3. Security-Definer Helper Function to break recursive RLS
+-- Without this, the manage policy would query dashboard_access while being
+-- evaluated by dashboard_access's own RLS, causing infinite recursion.
+CREATE OR REPLACE FUNCTION public.backoffice_current_access()
+RETURNS TABLE (
+    user_id BIGINT,
+    role VARCHAR(50),
+    is_active BOOLEAN
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT da.user_id, da.role, da.is_active
+    FROM public.dashboard_access da
+    WHERE da.auth_user_id = auth.uid()
+      AND da.is_active = TRUE;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.backoffice_current_access() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.backoffice_current_access() TO authenticated, service_role;
+
+-- 4. Enable RLS on dashboard_access
 ALTER TABLE public.dashboard_access ENABLE ROW LEVEL SECURITY;
 
--- 4. Policy: Operators can only read their own dashboard mapping
+-- 5. Policy: Operators can only read their own dashboard mapping
 DROP POLICY IF EXISTS dashboard_access_select_own ON public.dashboard_access;
 CREATE POLICY dashboard_access_select_own ON public.dashboard_access
     FOR SELECT
     USING (auth.uid() = auth_user_id);
 
--- 5. Policy: Only super_admin can insert / update dashboard permissions
+-- 6. Policy: Only super_admin can insert / update dashboard permissions
+-- Uses the security-definer helper to avoid recursive RLS evaluation
 DROP POLICY IF EXISTS dashboard_access_manage_super_admin ON public.dashboard_access;
 CREATE POLICY dashboard_access_manage_super_admin ON public.dashboard_access
     FOR ALL
     USING (
         EXISTS (
-            SELECT 1 FROM public.dashboard_access da
-            WHERE da.auth_user_id = auth.uid()
-              AND da.role = 'super_admin'
-              AND da.is_active = TRUE
+            SELECT 1 FROM public.backoffice_current_access() a
+            WHERE a.role = 'super_admin'
         )
     );

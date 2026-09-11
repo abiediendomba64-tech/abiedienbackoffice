@@ -21,16 +21,21 @@ html {
   margin: 0;
   padding: 0;
   width: 100%;
+  height: 100%;
   min-height: 100%;
+  min-height: 100dvh;
   background-color: var(--bg-main);
   color: #f1f5f9;
-  overflow-x: hidden;
+  /* `clip` on x preserves `overflow-y: auto` on the document scroller.
+     (`hidden` would also work on html, but `clip` avoids creating a
+     propagation-breaking scroll container in embedded WebViews.) */
+  overflow-x: clip;
   overflow-y: auto;
   /* -webkit-overflow-scrolling: touch is iOS-only momentum scrolling. Linters flag
      it as unsupported elsewhere, but it is kept intentionally: this is a
      mobile-first Telegram Mini-App and the property is harmless where ignored. */
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-y pinch-zoom;
+  touch-action: pan-x pan-y pinch-zoom;
   overscroll-behavior-y: auto;
 }
 
@@ -39,11 +44,16 @@ body {
   padding: 0;
   width: 100%;
   min-height: 100%;
+  min-height: 100dvh;
   background-color: transparent;
   color: inherit;
-  overflow-x: hidden;
+  /* `clip` (not `hidden`) on x: it does NOT create a scroll container, so
+     `overflow-y: visible` below is preserved and the document keeps ONE
+     scroller (html). `hidden` would force `visible` -> `auto` and create a
+     second body scroller that breaks sticky + Telegram WebView scrolling. */
+  overflow-x: clip;
   overflow-y: visible;
-  touch-action: pan-y pinch-zoom;
+  touch-action: pan-x pan-y pinch-zoom;
   overscroll-behavior-y: auto;
 }
 
@@ -52,8 +62,16 @@ body {
   padding: 0;
   width: 100%;
   min-height: 100%;
+  min-height: 100dvh;
+  /* Never `overflow: hidden` here — it kills document scrolling. */
   overflow: visible;
-  touch-action: pan-y pinch-zoom;
+  touch-action: pan-x pan-y pinch-zoom;
+}
+
+/* Fallback for browsers without `overflow: clip` support (old Safari):
+   they ignore `clip` above, so guard only those engines back to `hidden`. */
+@supports not (overflow: clip) {
+  html, body, #root { overflow-x: hidden; }
 }
 
 button, a, input, select, textarea {
@@ -200,6 +218,28 @@ button, a, input, select, textarea {
 }
 .touch-press:active {
   transform: scale(0.96);
+}
+
+/* Mobile scrolling fixes */
+@media (max-width: 768px) {
+  html, body, #root {
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  .glass-sidebar {
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  /* Prevent horizontal overflow on mobile */
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  
+  .overflow-x-auto::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 /* Mobile drag indicator pill */

@@ -152,8 +152,9 @@ export async function sendTelegramNotification(
 
 /**
  * Notifikasi Pembayaran Terverifikasi:
- * 1. Kirim rincian rahasia & audit ke Admin/Dev (@sandekalabot)
- * 2. Kirim notifikasi publik yang aman ke Grup Member (@mrssandebot)
+ * Hanya dikirimkan ke Admin / Super Admin / Dev (privasi finansial).
+ * NOTA: Tidak ada broadcast publik ke grup member (@mrssandebot) — rincian
+ * pembayaran adalah informasi rahasia internal dan tidak dipublik.
  */
 export async function sendPaymentVerifiedNotification(
   paymentId: string | number,
@@ -161,13 +162,12 @@ export async function sendPaymentVerifiedNotification(
   amount: number | string,
   operatorName: string
 ): Promise<void> {
-  // 1. Notifikasi Admin / Dev (Detail Finansial)
+  // 1. Notifikasi Admin / Super Admin / Dev (Detail Finansial Privat)
   const adminMessage = `💳 [PAYROLL VERIFIED] Pembayaran #${paymentId} untuk User ID #${userId} senilai Rp ${amount} telah DISETUJUI oleh ${operatorName}.`;
   await sendTelegramNotification('@sandekalabot (Admin & Dev Channel)', adminMessage, 'admin_private');
 
-  // 2. Notifikasi Member Group (Aman & Transparan via @mrssandebot)
-  const memberGroupMessage = `🎉 [KLAIM GAJI SUKSES] Pembayaran untuk Member ID #${userId} telah berhasil diverifikasi oleh Tim Finance & Admin. Saldo / transfer telah diproses. Terima kasih atas kerja keras Anda! 🚀\nGroup: https://t.me/+ybOzZ_lstEdhNDU1`;
-  await sendTelegramNotification('@mrssandebot (Grup Member Komunitas)', memberGroupMessage, 'member_group');
+  // 2. NOT ada broadcast publik ke member (@mrssandebot). Pembayaran = internal.
+  //    Jika admin/server perlu target ekstra, dikirim hanya ke admin_chat_ids.
 
   // The Edge function should ideally handle this audit log automatically, but for now we rely on DB triggers/RPCs
 }
@@ -716,6 +716,12 @@ export function saveDomainOrder(order: DomainOrderRequest): void {
 // MEMBER RE-REGISTRATION & DOMAIN INVENTORY
 // ==========================================
 
+export interface DomainCredential {
+  domain: string;
+  user: string;
+  pass: string;
+}
+
 export interface MemberDomainInventory {
   id: string;
   telegramId: string;
@@ -726,7 +732,7 @@ export interface MemberDomainInventory {
   bankAccount: string;
   domainCount: number;
   domainList: string[];
-  accountCredentials: string; // user, pass registrar/cpanel notes
+  domainCredentials: DomainCredential[];
   status: 'active' | 'pending_verification' | 'suspended';
   registeredAt: string;
   verifiedBy?: string;
@@ -743,7 +749,13 @@ export const INITIAL_MEMBER_INVENTORIES: MemberDomainInventory[] = [
     bankAccount: '8820192831',
     domainCount: 5,
     domainList: ['kopimax.com', 'abiedien.org', 'slotdemo-resmi.com', 'zeusvip.net', 'olympus77.com'],
-    accountCredentials: 'CF Root Account / Anycast Edge Master',
+    domainCredentials: [
+      { domain: 'kopimax.com', user: 'admin', pass: '••••••••' },
+      { domain: 'abiedien.org', user: 'admin', pass: '••••••••' },
+      { domain: 'slotdemo-resmi.com', user: 'admin', pass: '••••••••' },
+      { domain: 'zeusvip.net', user: 'admin', pass: '••••••••' },
+      { domain: 'olympus77.com', user: 'admin', pass: '••••••••' }
+    ],
     status: 'active',
     registeredAt: '2026-09-01 10:00:00',
     verifiedBy: 'System Auto-Root',
@@ -758,7 +770,10 @@ export const INITIAL_MEMBER_INVENTORIES: MemberDomainInventory[] = [
     bankAccount: '1420019283711',
     domainCount: 2,
     domainList: ['zeusgacor77.com', 'maxwinhoki88.com'],
-    accountCredentials: 'User: budi_ops / NS Cloudflare Shared',
+    domainCredentials: [
+      { domain: 'zeusgacor77.com', user: 'budi_ops', pass: '••••••••' },
+      { domain: 'maxwinhoki88.com', user: 'budi_ops', pass: '••••••••' }
+    ],
     status: 'active',
     registeredAt: '2026-09-05 14:20:00',
     verifiedBy: 'Super Admin',
@@ -773,7 +788,9 @@ export const INITIAL_MEMBER_INVENTORIES: MemberDomainInventory[] = [
     bankAccount: '0129018291823',
     domainCount: 1,
     domainList: ['olympusmaxwin.com'],
-    accountCredentials: 'User: rian_slot / Pending NS Setup',
+    domainCredentials: [
+      { domain: 'olympusmaxwin.com', user: 'rian_slot', pass: '••••••••' }
+    ],
     status: 'pending_verification',
     registeredAt: '2026-09-07 11:30:00',
     verifiedBy: 'Menunggu Verifikasi',

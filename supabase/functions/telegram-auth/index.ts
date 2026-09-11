@@ -495,6 +495,9 @@ const webhookSecret = Deno.env.get('TELEGRAM_WEBHOOK_SECRET');
 const rawSuperAdminIds = Deno.env.get('SUPER_ADMIN_IDS');
 const clientId = Deno.env.get('TELEGRAM_CLIENT_ID');
 const clientSecret = Deno.env.get('TELEGRAM_CLIENT_SECRET');
+const rawOtherIds = Deno.env.get('BOT_OTHER_IDS') || '';
+const altBotToken = Deno.env.get('TELEGRAM_ALT_BOT_TOKEN') || '';
+const rawSecondaryBotCtls = Deno.env.get('TELEGRAM_SECONDARY_BOT_CERTS') || '';
 
 if (!supabaseUrl) throw new Error("SUPABASE_URL is required");
 if (!supabaseServiceKey) throw new Error("SUPABASE_SERVICE_ROLE_KEY is required");
@@ -506,6 +509,18 @@ const superAdminIds = rawSuperAdminIds
   .split(',')
   .map((id) => id.trim())
   .filter(Boolean);
+
+const otherIds = rawOtherIds
+  .split(',')
+  .map((id) => id.trim())
+  .filter(Boolean);
+const secondaryBotCtls: { token: string; certB64?: string; webhookUrl: string }[] = [];
+if (rawSecondaryBotCtls) {
+  try {
+    const decoded = base64.decode(rawSecondaryBotCtls);
+    secondaryBotCtls.push(...JSON.parse(decoded) as { token: string; certB64?: string; webhookUrl: string }[]);
+  } catch {}
+}
 
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
   auth: { autoRefreshToken: false, persistSession: false }
@@ -1015,7 +1030,7 @@ Deno.serve(async (req: Request) => {
               [{ text: '📱 Buka Member Portal WebApp', web_app: { url: 'https://abiedienbackoffice.pages.dev' } }],
               [{ text: '🌐 Order Domain (.com Rp 170k)', callback_data: 'btn_reqdomain_prompt' }],
               [{ text: '📸 Ajukan Klaim Gaji', callback_data: 'btn_claim_prompt' }],
-              [{ text: '💬 Forum Komunitas Telegram', url: 'https://t.me/+AbiedienCommunityHub' }]
+              [{ text: '💬 Forum & Sync Grup Telegram', url: 'https://t.me/+ybOzZ_lstEdhNDU1' }]
             ]
           });
         } else if (effectiveProfile === 'member_pending') {
@@ -1118,7 +1133,7 @@ Deno.serve(async (req: Request) => {
                 `• *Ketersediaan Dasar:* ${isAvailable ? '🟢 Tersedia' : '🟡 Perlu Cek Manual'}\n` +
                 `• *Status:* ⏳ *PENDING VALIDATION / REVIEW*\n` +
                 `• *Biaya Registrasi:* **Rp 170.000**\n` +
-                `• *Rekening Pembayaran:* BCA \`8820192831\` a/n PT Abiedien Solusi\n\n` +
+                `• *Rekening Pembayaran:* Bank Mandiri \`1830007183303\` a/n AISAH\n\n` +
                 `*Langkah Selanjutnya:*\n` +
                 `1. Transfer biaya aktivasi ke rekening di atas.\n` +
                 `2. Upload foto bukti transfer ke bot ini dengan caption:\n` +
@@ -1195,7 +1210,7 @@ Deno.serve(async (req: Request) => {
           `💬 *Forum & Komunitas Resmi Abiedien*\n\nBergabunglah dengan grup diskusi resmi untuk update seputar SEO, domain slot demo, optimasi Cloudflare, dan pengumuman operasional:`,
           {
             inline_keyboard: [
-              [{ text: '👥 Gabung Grup Diskusi Telegram', url: 'https://t.me/+AbiedienCommunityHub' }],
+              [{ text: '👥 Forum & Sync Grup Diskusi Telegram', url: 'https://t.me/+ybOzZ_lstEdhNDU1' }],
               [{ text: '📢 Channel Pengumuman & SLA', url: 'https://t.me/AbiedienAnnouncements' }],
               [{ text: '💬 Konsultasi Privat Admin', url: `tg://user?id=${tgUser?.assigned_admin_id || 7862805424}` }]
             ]

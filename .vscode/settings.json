@@ -7,9 +7,22 @@
     "typescriptreact": "javascript"
   },
   "editor.formatOnSave": true,
+  // Deno LS only activates if denoland.vscode-deno is installed.
+  // Scoped to Edge Functions so it never parses the Vite app.
+  "deno.enable": true,
   "deno.enablePaths": [
     "./supabase/functions"
   ],
-  "deno.importMap": "./supabase/functions/telegram-auth/deno.json",
-  "deno.config": "./supabase/functions/telegram-auth/deno.json"
+  // NOTE: this deno.json has compilerOptions only (no "imports" map),
+  // so it is a config, NOT an import map. Do not set deno.importMap to it.
+  "deno.config": "./supabase/functions/telegram-auth/deno.json",
+  // This repo is Postgres/Supabase. Associate migration files with the
+  // "postgres" language ID so the installed SQL extension uses PG dialect
+  // (not T-SQL/MSSQL) for syntax checking. Installs like
+  // ckolkman.vscode-postgres or supabase-community.postgres-language-server
+  // provide this language ID.
+  "files.associations": {
+    "supabase/migrations/*.sql": "postgres",
+    "supabase/seeds/**/*": "postgres"
+  }
 }
