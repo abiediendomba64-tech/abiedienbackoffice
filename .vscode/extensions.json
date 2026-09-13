@@ -8,6 +8,11 @@
     "esbenp.prettier-vscode",
     "dbaeumer.vscode-eslint",
     "christian-kohler.npm-intellisense",
-    "humao.rest-client"
+    "humao.rest-client",
+    // Provides the "postgres" language ID this repo's migrations are
+    // associated with in .vscode/settings.json. Without it, the
+    // ms-mssql (T-SQL) extension incorrectly lints .sql files and
+    // floods the Problems panel with false "Incorrect syntax" errors.
+    "ckolkman.vscode-postgres"
   ]
 }

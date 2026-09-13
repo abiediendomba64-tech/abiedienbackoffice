@@ -65,6 +65,14 @@ export const AdminManager: React.FC<AdminManagerProps> = ({ admins, onRefresh })
       const result = await deleteAdminAccount(adminId);
       if (result.success) { setMessage('Akun dihapus!'); onRefresh(); }
       else setMessage(result.error || 'Gagal hapus');
+    } catch (e: any) { setMessage(e.message); }
+  };
+
+  const startEdit = (admin: AdminAccount) => {
+    setEditingAdmin(admin);
+    setForm({ email: admin.email, password: '', role: admin.role, full_name: admin.full_name, telegram_id: admin.telegram_id?.toString() || '' });
+    setShowCreate(false);
+  };
 
   return (
     <div className="space-y-6">
@@ -99,7 +107,6 @@ export const AdminManager: React.FC<AdminManagerProps> = ({ admins, onRefresh })
           </div>
         </div>
       )}
-    } catch (e: any) { setMessage(e.message); }
 
       <div className="space-y-3">
         {admins.length === 0 ? (
@@ -130,10 +137,3 @@ export const AdminManager: React.FC<AdminManagerProps> = ({ admins, onRefresh })
     </div>
   );
 };
-  };
-
-  const startEdit = (admin: AdminAccount) => {
-    setEditingAdmin(admin);
-    setForm({ email: admin.email, password: '', role: admin.role, full_name: admin.full_name, telegram_id: admin.telegram_id?.toString() || '' });
-    setShowCreate(false);
-  };

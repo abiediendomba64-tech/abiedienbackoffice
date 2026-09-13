@@ -1,220 +1,172 @@
-# System Architecture — Abiedien Backoffice
+# System Architecture — Master Control Center
 
-> **Status**: BASELINE AUDIT — Local Only. Not deployed to production.
-> **Last Updated**: 2026-09-10
-
----
-
-## 1. Platform Overview
-
-```
-GitHub (source control)
-        │
-        ▼
-Supabase (PostgreSQL + Auth + Edge Functions)
-        │
-        ├── telegram-auth  (Edge Function)
-        └── backoffice-api (Edge Function)
-                │
-                ├── Cloudflare Pages (WebApp / Backoffice UI)
-                └── Telegram Bot (command/input channel only)
-```
+> **Status:** System of Record Architecture Baseline  
+> **Updated:** 2026-09-13 (Phase 013: Website Lifecycle)  
+> **Source of Truth Hierarchy:** GitHub (Code) | Supabase (Business State & Ledger) | Cloudflare (Edge Execution) | Dashboard (Control Tower) | Telegram (Intake & Alerts)
 
 ---
 
-## 2. Identity Architecture
+## 1. Topologi Tiga Pilar Eksekusi
 
-### Canonical Identity Model
+Sistem operasional `abiedienbackoffice` membagi batasan tanggung jawab komputasi ke dalam tiga pilar terpisah tanpa tumpang tindih:
 
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. GITHUB (Code Source of Truth)                                            │
+│    - Repository: source code, schema migrations (001-023), CI/CD workflows  │
+│    - GitHub Actions: automated tests, linting, build & deployment triggers  │
+│    - Aturan: Tidak menyimpan state bisnis atau data dinamis operasional.    │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 2. SUPABASE (Business State & Financial System of Record)                   │
+│    - PostgreSQL Database: master tables, constraints, foreign keys          │
+│    - State Machines: FSM triggers & atomic SECURITY DEFINER RPCs            │
+│    - Financial Ledger: double-entry accounting (payin, payout, settlement)  │
+│    - Immutable Audit: audit_logs (append-only trigger protected)            │
+│    - Auth & RBAC: public.dashboard_access ↔ backoffice_capabilities         │
+│    - Edge Functions: telegram-auth, backoffice-api-v3                       │
+│    - Aturan: Satu-satunya sumber kebenaran data bisnis.                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 3. CLOUDFLARE (Edge Execution & Proxy Layer)                                │
+│    - DNS Management: automated records via Cloudflare API v4                │
+│    - SSL/TLS: edge encryption, automatic certificate renewal               │
+│    - Routing & Proxy: DDoS mitigation, WAF, CDN caching                     │
+│    - Web Hosting: Cloudflare Pages for Dashboard & client frontends         │
+│    - Aturan: Cloudflare adalah execution engine, BUKAN database.           │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
-Telegram User
-      │
-      ▼
-telegram_users
-  .telegram_user_id (external key)
-  .linked_user_id ──────────────► public.users.id (BIGSERIAL)
-  .role             (presentation metadata only)
-  .status           (pending / active / blocked)
-
-Staff / Operator
-      │
-      ▼
-auth.users (Supabase Auth)
-  .id (UUID)
-      │
-      ▼
-dashboard_access
-  .auth_user_id → auth.users.id
-  .role          (admin / dev / super_admin / root)
-  .is_active
-```
-
-### What is `public.users`?
-
-`public.users` is the **canonical business identity** for ALL system entities:
-- Members linked from `telegram_users.linked_user_id`
-- Staff linked from `dashboard_access.user_id`
-- FK target for: `tickets`, `claims`, `domain_assignments`, `audit_logs`
-
-`users.id` is `BIGSERIAL` (NOT UUID). This is a critical FK contract: all references must use `BIGINT`.
 
 ---
 
-## 3. Authorization Architecture
+## 2. Model Identitas & Autorisasi (RBAC)
 
-### Rule: DB Capability, Not Code Map
+### 2.1 Identitas Kanonikal (`public.users`)
+Semua aktor dalam sistem bermuara pada tabel induk `public.users` dengan primary key bertipe `BIGSERIAL` (`BIGINT`):
+- **Member:** Terhubung melalui `public.telegram_users.linked_user_id → public.users.id`.
+- **Operator / Staff:** Terhubung melalui `public.dashboard_access.user_id → public.users.id` dengan relasi 1:1 ke `auth.users.id` (UUID).
+- **Semua Foreign Key** yang mengidentifikasi pengguna (`owner_user_id`, `actor_id`, `assigned_to`, `requested_by`) bertipe `BIGINT` untuk menjaga integritas relasional tanpa tipe yang terdistorsi.
 
-Authorization is enforced **server-side only** via:
-
-```
-backoffice_capabilities (code, description, category)
-backoffice_role_capabilities (role, capability_code)
-backoffice_has_capability(p_code VARCHAR) → BOOLEAN  [SECURITY DEFINER]
-```
-
-Code-side role/capability maps are **presentation metadata only** (for routing/menu display). They are NOT authorization gates.
-
-### Capability Gate Pattern
-
+### 2.2 Autorisasi Berbasis Kapabilitas (Capability-Driven Security)
+Autorisasi **tidak pernah** ditentukan oleh pengecekan string role di client. Akses dikunci di layer database melalui sistem kapabilitas:
 ```sql
-IF NOT public.backoffice_has_capability('some.capability') THEN
-    RAISE EXCEPTION 'Access denied';
+-- Pattern Pengecekan di dalam Stored Procedure:
+IF NOT public.backoffice_has_capability('site.manage') THEN
+    RAISE EXCEPTION 'Access denied: role % lacks site.manage capability', v_actor_role;
 END IF;
 ```
 
-### Deny by Default
-
-All tables have RLS enabled. No public/anon policies exist on sensitive tables. Default: **DENY**.
-
----
-
-## 4. Ticket FSM
-
-Defined in: `20260905000001_initial_schema.sql` + `20260905000004_atomic_ticket_mutation_and_fsm.sql`
-
-```
-Valid statuses: draft, pending, assigned, waiting_member,
-                in_progress, escalated, resolved, closed,
-                rejected, cancelled
-```
-
-**No `open` status exists. Do not use it.**
-
-### Valid FSM Transitions (enforced in `mutate_ticket_state_atomic`)
-
-```
-draft        → pending, cancelled
-pending      → assigned, in_progress, rejected, cancelled
-assigned     → in_progress, waiting_member, escalated, rejected, cancelled
-in_progress  → waiting_member, escalated, resolved, cancelled
-waiting_member → in_progress, resolved, cancelled
-escalated    → in_progress, resolved, closed
-resolved     → closed, in_progress
-closed       → (only super_admin/root can reopen)
-```
-
-`mutate_ticket_state_atomic` is the ONLY authorized path for ticket state mutation.
+#### Matriks Peran & Kapabilitas Inti:
+| Role | Cakupan Kapabilitas |
+|------|---------------------|
+| `root` | Akses penuh tanpa batas ke semua kapabilitas (`*`). |
+| `super_admin` | Akses administratif penuh, manajemen staf, system controls emergency. |
+| `admin` | Manajemen operasional situs (`site.*`), domain (`domain.*`), tiket (`ticket.*`). |
+| `dev` | Akses diagnosis teknis, deployment log, inspect health checks. |
+| `finance` | Akses klaim (`claim.*`), payment gateway (`payment.*`), transaksi ledger (`ledger.*`). |
+| `operator` | Penanganan tiket masuk, request antrean awal situs. |
+| `member` | Terbatas hanya pada `site.request` dan melihat data miliknya sendiri. |
 
 ---
 
-## 5. Domain Pipeline Architecture
+## 3. Finite State Machines (FSM)
 
-### Separation of Concerns
+### 3.1 Website Lifecycle FSM (`websites.lifecycle_status`)
+Didefinisikan dan ditegakkan oleh trigger `validate_website_lifecycle_transition()`:
 
-| Layer | Table | Responsibility |
-|-------|-------|----------------|
-| Request | `tickets` (category=domain_request) | CS workflow, audit trail |
-| Resource | `domain_inventory` | Platform-owned domain assets |
-| Lifecycle | `domain_assignments` | Ownership + provisioning state |
-
-### Domain Request Flow
-
-```
-/req_domain domain.com
+```text
+  requested ──► validating ──► approved
+                                   │
+                                   ▼
+  deploying ◄── building ◄── provisioning
       │
       ▼
-identity resolve (telegram_users → users.id)
-      │
-      ▼
-format validation
-      │
-      ▼
-duplicate active request check
-      │
-      ▼
-CREATE TICKET (status=pending, category=domain_request)
-      │
-      ▼
-Admin Review Queue
-      │
-      ▼
-Global Domain Availability Check (RDAP + DNS + internal inventory)
-      │
-      ├── NOT AVAILABLE → reject ticket
-      └── AVAILABLE
-            │
-            ▼
-        admin approves
-            │
-            ▼
-        reserve domain_inventory
-            │
-            ▼
-        create domain_assignments (status=pending → reviewing → approved)
-            │
-            ▼
-        provisioning → dns_pending → active
+  dns_pending ──► ssl_pending ──► panel_pending ──► access_verification
+                                                           │
+                                                           ▼
+  reclaimed ◄── reclaim_warning ◄── suspended ◄── [ ACTIVE ] ◄──► degraded
 ```
 
-**CRITICAL**: `domain_inventory` is NEVER touched during `/req_domain`. Only after admin approval.
+#### Aturan Transisi:
+- Transisi status hanya sah bila melalui fungsi atomik `transition_website_lifecycle()`.
+- Status `active` secara otomatis mengunci `activated_at = NOW()`.
+- Status `reclaim_warning` dan `reclaimed` mencatat `reclaim_at = NOW()`.
+- Setiap transisi otomatis menghasilkan entri kronologis di `public.website_events` dan `public.audit_logs`.
 
-### Domain Assignment FSM (enforced by trigger)
-
+### 3.2 Update Request FSM (`update_requests.status`)
+```text
+  requested ──► reviewing ──► approved ──► scheduled ──► effective
+                     │             │
+                     ▼             ▼
+                  rejected     cancelled
 ```
-pending → reviewing, rejected, cancelled
-reviewing → approved, rejected, cancelled
-approved → provisioning, cancelled
-provisioning → dns_pending, rejected, cancelled
-dns_pending → active, provisioning, rejected, cancelled
-active → released, revoked
-rejected, cancelled, released, revoked → TERMINAL (no further transition)
+
+### 3.3 Domain Assignment FSM (`domain_assignments.status`)
+```text
+  pending ──► reviewing ──► approved ──► provisioning ──► dns_pending ──► active
+                 │             │                                            │
+                 ▼             ▼                                            ▼
+              rejected     cancelled                                  released / revoked
 ```
 
 ---
 
-## 6. Notification Architecture
+## 4. Pola Keamanan & Secret Vault (`website_credentials_ref`)
 
-Table: `telegram_notification_log`
-
-```
-status: queued → sending → sent
-                       → failed (retry via attempt_count + error_code)
-```
-
-Idempotency: check `context_type` + `context_id` + `status=sent` before re-queuing.
-
-Delivery: Edge Functions only (service_role). No client-side access.
+### Prinsip: No Plaintext Credentials in DB
+Kredensial panel website (username, password, token API) **dilarang disimpan dalam bentuk teks biasa (plaintext)** di tabel database operasional:
+- Tabel `public.website_credentials_ref` hanya menyimpan:
+  - `panel_url`: URL login panel (misal: `https://domain.com/backoffice`).
+  - `username`: Nama pengguna administratif.
+  - `secret_ref`: UUID atau URI referensi ke encrypted secret vault (misal: Supabase Vault / Cloudflare Secrets / HashiCorp Vault).
+  - `delivery_channel`: Kanal pengiriman rahasia (misal: `telegram_dm_one_time`).
+  - `delivered_at`: Waktu kredensial diserahkan kepada pemilik.
 
 ---
 
-## 7. Migration Chain
+## 5. Arsitektur Pemantauan Kesehatan & Insiden
 
-| File | Phase | Key Output |
-|------|-------|------------|
-| 001_initial_schema | Baseline | users, tickets, payments, audit_logs |
-| 002_contract_hardening | Hardening | constraints |
-| 003_supabase_schema | Supabase extensions | auth integration |
-| 004_atomic_ticket_mutation_and_fsm | Ticket FSM | mutate_ticket_state_atomic, ticket_events, backoffice_capabilities |
-| 005_dashboard_access_and_auth_integrity | Staff auth | dashboard_access |
-| 006_telegram_users_claims_and_audit | Telegram + Claims | telegram_users, claims, admin_chat_ids (seed) |
-| 007_security_remediation_p0 | Security | REVOKE, RLS hardening, search_path='' |
-| 008_system_controls | Emergency controls | system_controls, update_system_control RPC |
-| 009_capability_alignment | Authorization | backoffice_has_capability, prevent actor spoofing |
-| 010_identity_unification | Identity | telegram_users.linked_user_id, submit_claim_atomic |
-| 011_domain_pipeline | Domain | domain_inventory, domain_assignments, telegram_notification_log, create_domain_request_ticket |
+Diagnostik sistematis dilakukan secara berkala dan saat terjadi laporan gangguan (incident triggered):
+
+```text
+[ Health Probe / Diagnostic Run ]
+               │
+  ┌────────────┼────────────┬────────────┬────────────┐
+  ▼            ▼            ▼            ▼            ▼
+[ DNS ]      [ SSL ]      [ HTTP ]     [ AUTH ]    [ PAYMENT ]
+  │            │            │            │            │
+  └────────────┴────────────┼────────────┴────────────┘
+                            ▼
+              Record to website_health_checks
+                            │
+               ┌────────────┴────────────┐
+               ▼                         ▼
+         [ All Pass ]              [ Fail Detected ]
+         Status: Healthy           Status: Degraded
+                                   Auto-create Incident #
+                                   Dispatch Telegram Alert
+```
 
 ---
 
-## 8. Known Issues (Audit Findings)
+## 6. Protokol Kontrak Verifikasi Antar-Lapisan
 
-See `docs/INTEGRITY_FINAL.md` for detailed findings and status.
+Setiap fitur baru atau migrasi database wajib lolos uji validasi pada 8 titik kontrak:
+
+```text
+  1. DB Schema & Constraints (Type safety, NOT NULL, CHECK, Foreign Keys)
+  2. Database Stored Procedures & FSM Triggers (PL/pgSQL atomicity)
+  3. API Endpoint / Edge Functions (JWT validation, payload parsing)
+  4. RBAC Capability Gate (backoffice_has_capability verification)
+  5. Dashboard UI Action (Component state, action dispatch, feedback)
+  6. Cloudflare Edge Integration (DNS/SSL/Proxy synchronization)
+  7. GitHub CI/CD Pipeline (npm run lint, test, build exit 0)
+  8. Notification Dispatcher (Telegram notification log delivery)
+```
+
+---
+*Dokumen ini menjadi acuan struktural utama pengembangan backend dan integrasi sistem Abiedien Backoffice.*

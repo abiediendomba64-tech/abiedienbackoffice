@@ -100,9 +100,16 @@ import {
   saveMemberInventoryItem,
   TechnicalCase,
   getTechnicalCasesList,
-  saveTechnicalCase
+  saveTechnicalCase,
+  DomainCredential
 } from './lib/api';
 import { LoginDetectionRecord } from './types';
+import { CloudflareAnalyticsDashboard } from './components/CloudflareAnalyticsDashboard';
+import { AdminLogin } from './components/AdminLogin';
+import { MemberLogin } from './components/MemberLogin';
+import { ResetPasswordPage } from './components/ResetPasswordPage';
+import { verifyAdminAccess, verifyMemberAccess, signOut as authSignOut } from './lib/auth';
+import { supabase } from './lib/supabase';
 
 declare global {
   interface Window {
@@ -187,7 +194,7 @@ export type Stats = {
   superAdminCount: number 
 };
 
-export type UserRole = 'super_admin' | 'dev' | 'admin' | 'member';
+export type UserRole = 'super_admin' | 'dev' | 'admin' | 'member' | '';
 
 export type WebAppTab = 
   | 'overview' 
@@ -412,6 +419,22 @@ export default function App() {
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
   const [commandInput, setCommandInput] = useState('');
 
+  // Route State for Login Separation: /admin/login vs /member/login vs /reset-password
+  const [currentPath, setCurrentPath] = useState<string>(() => {
+    const p = typeof window !== 'undefined' ? window.location.pathname.toLowerCase() : '';
+    const hash = typeof window !== 'undefined' ? window.location.hash.toLowerCase() : '';
+    if (p.startsWith('/reset-password') || hash.includes('type=recovery')) return '/reset-password';
+    if (p.startsWith('/member')) return '/member/login';
+    return '/admin/login';
+  });
+
+  const navigate = (path: string) => {
+    if (typeof window !== 'undefined' && window.location.pathname !== path) {
+      window.history.pushState(null, '', path);
+    }
+    setCurrentPath(path);
+  };
+
   // Command hierarchy for / commands
   const commandHierarchy = [
     { cmd: '/start', desc: 'Menu utama & selamat datang', category: 'Umum' },
@@ -553,6 +576,72 @@ export default function App() {
     } else {
       setAuthenticated(false);
     }
+
+    // Synchronize browser history popstate for /admin/login vs /member/login vs /reset-password
+    const handlePopState = () => {
+      const p = window.location.pathname.toLowerCase();
+      const hash = window.location.hash.toLowerCase();
+      if (p.startsWith('/reset-password') || hash.includes('type=recovery')) {
+        setCurrentPath('/reset-password');
+      } else if (p.startsWith('/member')) {
+        setCurrentPath('/member/login');
+      } else {
+        setCurrentPath('/admin/login');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+
+    // Supabase Auth State Change Listener (OAuth Google, OTP, Password, Recovery)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setCurrentPath('/reset-password');
+        return;
+      }
+
+      if (event === 'SIGNED_IN' && session?.user) {
+        if (window.location.pathname.toLowerCase().startsWith('/reset-password') || window.location.hash.includes('type=recovery')) {
+          setCurrentPath('/reset-password');
+          return;
+        }
+
+        localStorage.setItem('backoffice_access_token', session.access_token);
+        const isMember = window.location.pathname.toLowerCase().startsWith('/member');
+        if (!isMember) {
+          const adminCheck = await verifyAdminAccess();
+          if (adminCheck.allowed) {
+            const role = (adminCheck.role as UserRole) || 'super_admin';
+            const name = adminCheck.full_name || session.user.email || 'Super Admin';
+            setCurrentUserRole(role);
+            setCurrentUserName(name);
+            localStorage.setItem('user_role', role);
+            localStorage.setItem('user_name', name);
+            setAuthenticated(true);
+            showToast(`Login Super Admin Berhasil! (${name})`, 'success');
+          } else {
+            await authSignOut();
+            setAuthenticated(false);
+            showToast(adminCheck.reason || 'Akses ditolak: Akun ini bukan Super Admin terdaftar.', 'error');
+          }
+        } else {
+          const memberCheck = await verifyMemberAccess();
+          const name = memberCheck.full_name || session.user.email || 'Member';
+          setCurrentUserRole('member');
+          setCurrentUserName(name);
+          localStorage.setItem('user_role', 'member');
+          localStorage.setItem('user_name', name);
+          setAuthenticated(true);
+          showToast(`Login Member Berhasil! (${name})`, 'success');
+        }
+      } else if (event === 'SIGNED_OUT') {
+        setAuthenticated(false);
+        setCurrentUserRole('');
+      }
+    });
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      subscription.unsubscribe();
+    };
   }, []);
 
 
@@ -584,13 +673,15 @@ export default function App() {
     } 
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('backoffice_access_token');
-    localStorage.removeItem('backoffice_refresh_token');
-    localStorage.removeItem('user_role');
-    localStorage.removeItem('user_name');
-    localStorage.removeItem('user_tg_id');
+  const handleLogout = async () => {
+    await authSignOut();
     setAuthenticated(false);
+    setCurrentUserRole('');
+    if (currentUserRole === 'member') {
+      navigate('/member/login');
+    } else {
+      navigate('/admin/login');
+    }
   };
 
   useEffect(() => { 
@@ -836,25 +927,45 @@ export default function App() {
     }
   };
 
-  if (!authenticated) {
+  // 1. Password Reset Page (Accessible unauthenticated or via recovery session)
+  if (currentPath === '/reset-password' || (typeof window !== 'undefined' && window.location.hash.includes('type=recovery'))) {
     return (
-      <UniversalAuthView 
-        email={email} 
-        password={password} 
-        setEmail={setEmail} 
-        setPassword={setPassword} 
-        loading={loggingIn} 
-        error={error} 
-        onLoginSuccess={(role: 'super_admin' | 'dev' | 'member', name: string, tgId: string, token: string) => {
-          localStorage.setItem('backoffice_access_token', token || 'demo_super_admin_token_abied');
+      <ResetPasswordPage
+        onNavigate={(path) => navigate(path)}
+      />
+    );
+  }
+
+  if (!authenticated) {
+    if (currentPath === '/member/login') {
+      return (
+        <MemberLogin
+          onSuccess={(role, name, token) => {
+            localStorage.setItem('backoffice_access_token', token);
+            localStorage.setItem('user_role', role);
+            localStorage.setItem('user_name', name);
+            setCurrentUserRole(role);
+            setCurrentUserName(name);
+            setAuthenticated(true);
+            showToast('Selamat datang di Portal Member!', 'success');
+          }}
+          onNavigateToAdmin={() => navigate('/admin/login')}
+        />
+      );
+    }
+
+    return (
+      <AdminLogin
+        onSuccess={(role, name, token) => {
+          localStorage.setItem('backoffice_access_token', token);
           localStorage.setItem('user_role', role);
           localStorage.setItem('user_name', name);
-          localStorage.setItem('user_tg_id', tgId);
           setCurrentUserRole(role);
           setCurrentUserName(name);
-          setCurrentUserTelegramId(tgId);
           setAuthenticated(true);
+          showToast(`Selamat datang, ${name} (${role})!`, 'success');
         }}
+        onNavigateToMember={() => navigate('/member/login')}
       />
     );
   }
@@ -3097,7 +3208,7 @@ function SeoAuditWorkspace({ tickets, onSelect }: { tickets: Ticket[]; onSelect:
 }
 
 function TrafficAnalyticsView({ stats, domains, onSelect, onToast }: any) {
-  const [subTab, setSubTab] = useState<'edge_health' | 'banners' | 'purge_tool' | 'domains'>('edge_health');
+  const [subTab, setSubTab] = useState<'edge_health' | 'cf_analytics' | 'banners' | 'purge_tool' | 'domains'>('cf_analytics');
   const [nodes, setNodes] = useState<CdnHealthNode[]>([]);
   const [banners, setBanners] = useState<BannerAssetDiagnostic[]>(INITIAL_BANNER_ASSETS);
   const [loadingProbe, setLoadingProbe] = useState(false);
@@ -3323,6 +3434,18 @@ function TrafficAnalyticsView({ stats, domains, onSelect, onToast }: any) {
       {/* Sub-Navigation Tabs */}
       <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-900/80 border border-white/5 overflow-x-auto no-scrollbar">
         <button
+          onClick={() => setSubTab('cf_analytics')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
+            subTab === 'cf_analytics'
+              ? 'bg-orange-500/20 text-orange-300 border border-orange-500/30'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Globe2 className="w-3.5 h-3.5" />
+          <span>Cloudflare Edge Analytics Hub</span>
+        </button>
+
+        <button
           onClick={() => setSubTab('edge_health')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
             subTab === 'edge_health'
@@ -3370,6 +3493,13 @@ function TrafficAnalyticsView({ stats, domains, onSelect, onToast }: any) {
           <span>Matriks Trafik Domain ({domains.length})</span>
         </button>
       </div>
+
+      {/* =================================================== */}
+      {/* SUBTAB: CLOUDFLARE EDGE ANALYTICS HUB */}
+      {/* =================================================== */}
+      {subTab === 'cf_analytics' && (
+        <CloudflareAnalyticsDashboard />
+      )}
 
       {/* =================================================== */}
       {/* SUBTAB 1: EDGE NODE & SERVER HEALTH */}
@@ -5070,7 +5200,18 @@ function MemberInventoryView({ inventories: initialInventories, onUpdateInventor
       bankAccount,
       domainCount: dList.length || Number(domainCount) || 1,
       domainList: dList,
-      accountCredentials: credentials || 'Credentials tercatat aman.',
+      domainCredentials: credentialsText
+        ? credentialsText
+            .split(/[,\n]+/)
+            .map(line => {
+              const parts = line.split('|').map(p => p.trim());
+              if (parts.length >= 3 && parts[0]) {
+                return { domain: parts[0], user: parts[1], pass: parts[2] };
+              }
+              return null;
+            })
+            .filter((c): c is DomainCredential => c !== null && c.domain.length > 0 && c.user.length > 0 && c.pass.length > 0)
+        : [],
       status: 'active',
       registeredAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
       verifiedBy: 'Super Admin',
@@ -5087,7 +5228,7 @@ function MemberInventoryView({ inventories: initialInventories, onUpdateInventor
     setPhone('');
     setBankAccount('');
     setDomainsText('');
-    setCredentials('');
+    setCredentialsText('');
     onToast(`Data pendaftaran ulang member ${fullName} berhasil disimpan.`, 'success');
   };
 
@@ -5363,8 +5504,8 @@ function MemberInventoryView({ inventories: initialInventories, onUpdateInventor
                 <input
                   type="text"
                   placeholder="Contoh: User: budi_ops / Pass: Secret123#"
-                  value={credentials}
-                  onChange={(e) => setCredentials(e.target.value)}
+                  value={credentialsText}
+                  onChange={(e) => setCredentialsText(e.target.value)}
                   className="w-full h-9 px-3 rounded-xl bg-white/5 border border-white/10 text-slate-200 font-mono text-xs focus:outline-none focus:border-cyan-500"
                 />
               </div>
@@ -8104,7 +8245,7 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
         }
         return null;
       })
-      .filter((c): c is DomainCredential => c !== null && c.domain && c.user && c.pass);
+      .filter((c): c is DomainCredential => Boolean(c && c.domain && c.user && c.pass));
     const updated: MemberDomainInventory = {
       ...myInventory,
       phoneWhatsapp: invPhone,

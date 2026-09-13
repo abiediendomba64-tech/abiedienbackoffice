@@ -10,31 +10,34 @@ ALTER TABLE public.dashboard_access ADD CONSTRAINT valid_dashboard_role
     CHECK (role IN ('admin', 'dev', 'super_admin', 'root'));
 
 -- 2. Register new capabilities in the registry
-INSERT INTO public.backoffice_capabilities (capability, description) VALUES
-('telegram.send_notification', 'Mengirim notifikasi ke Telegram (E2E)'),
-('dashboard.access', 'Akses masuk antarmuka backoffice operator')
-ON CONFLICT (capability) DO NOTHING;
+INSERT INTO public.backoffice_capabilities (code, description, category) VALUES
+('telegram.send_notification', 'Mengirim notifikasi ke Telegram (E2E)', 'integration'),
+('dashboard.access', 'Akses masuk antarmuka backoffice operator', 'dashboard')
+ON CONFLICT (code) DO NOTHING;
 
 -- Grant capabilities strictly aligned with operational hierarchy
 -- dev: operations/troubleshooting, but NOT sending arbitrary telegram broadcasts
-INSERT INTO public.backoffice_role_capabilities (role, capability_id)
-SELECT r.role, bc.id
+INSERT INTO public.backoffice_role_capabilities (role, capability_code)
+SELECT r.role, bc.code
 FROM (VALUES ('root'), ('super_admin'), ('admin'), ('dev')) AS r(role)
 CROSS JOIN public.backoffice_capabilities bc
-WHERE bc.capability = 'dashboard.access'
-ON CONFLICT (role, capability_id) DO NOTHING;
+WHERE bc.code = 'dashboard.access'
+ON CONFLICT (role, capability_code) DO NOTHING;
 
-INSERT INTO public.backoffice_role_capabilities (role, capability_id)
-SELECT r.role, bc.id
+INSERT INTO public.backoffice_role_capabilities (role, capability_code)
+SELECT r.role, bc.code
 FROM (VALUES ('root'), ('super_admin'), ('admin')) AS r(role)
 CROSS JOIN public.backoffice_capabilities bc
-WHERE bc.capability = 'telegram.send_notification'
-ON CONFLICT (role, capability_id) DO NOTHING;
+WHERE bc.code = 'telegram.send_notification'
+ON CONFLICT (role, capability_code) DO NOTHING;
 
 -- 3. Security-Definer Helper Functions (Breaking recursive RLS)
 
 -- Helper A: Fetch current operator identity safely without circular RLS
-DROP FUNCTION IF EXISTS public.backoffice_current_access();
+-- NOTE: plain DROP is used by CREATE OR REPLACE below. We must NOT run a bare
+-- DROP FUNCTION here: migration 005's dashboard_access RLS policy depends on
+-- this function, so a DROP without CASCADE would fail the migration. The
+-- CREATE OR REPLACE below rebuilds it with the same signature.
 CREATE OR REPLACE FUNCTION public.backoffice_current_access()
 RETURNS TABLE (
     user_id BIGINT,
@@ -87,9 +90,9 @@ BEGIN
     SELECT EXISTS (
         SELECT 1
         FROM public.backoffice_role_capabilities rc
-        JOIN public.backoffice_capabilities bc ON bc.id = rc.capability_id
+        JOIN public.backoffice_capabilities bc ON bc.code = rc.capability_code
         WHERE rc.role = v_role
-          AND bc.capability = required_capability
+          AND bc.code = required_capability
     ) INTO v_has_cap;
 
     RETURN COALESCE(v_has_cap, FALSE);

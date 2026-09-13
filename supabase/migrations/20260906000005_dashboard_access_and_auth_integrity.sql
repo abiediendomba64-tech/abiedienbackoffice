@@ -4,7 +4,7 @@
 -- ====================================================================
 
 -- 1. Create dashboard_access mapping table
-CREATE TABLE IF NOT EXISTS public.dashboard_access (
+CREATE TABLE public.dashboard_access (
     id BIGSERIAL PRIMARY KEY,
     auth_user_id UUID NOT NULL,
     user_id BIGINT NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
@@ -18,13 +18,13 @@ CREATE TABLE IF NOT EXISTS public.dashboard_access (
 
 -- 2. Strictly enforce 1-to-1 mapping for each Supabase Auth User
 -- This prevents .maybeSingle() query collision in backend Edge Functions
-CREATE UNIQUE INDEX IF NOT EXISTS idx_dashboard_access_auth_user_id 
+CREATE UNIQUE INDEX idx_dashboard_access_auth_user_id 
 ON public.dashboard_access(auth_user_id);
 
-CREATE INDEX IF NOT EXISTS idx_dashboard_access_user_id 
+CREATE INDEX idx_dashboard_access_user_id 
 ON public.dashboard_access(user_id);
 
-CREATE INDEX IF NOT EXISTS idx_dashboard_access_role_active 
+CREATE INDEX idx_dashboard_access_role_active 
 ON public.dashboard_access(role, is_active);
 
 -- 3. Security-Definer Helper Function to break recursive RLS

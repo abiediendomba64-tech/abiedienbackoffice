@@ -155,3 +155,7 @@ supabase/.env
 
 # Editor/IDE submodule — not part of source
 vscode-antigravity-cockpit/
+
+# Local toolkit backups
+.ag-kit-backups/
+

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "runId": "20260912-041147-282",
+  "strategy": "merge",
+  "toolkitVersion": "2026.8.31",
+  "createdAt": "2026-09-12T04:11:47.655Z",
+  "backupDir": "G:\\abiedien\\abiedienbackoffice\\.ag-kit-backups\\20260912-041147-282",
+  "summary": {
+    "actions": 0,
+    "conflicts": 0,
+    "preserved": 0,
+    "unchanged": 221
+  },
+  "actions": [],
+  "conflicts": [],
+  "preserved": []
+}
