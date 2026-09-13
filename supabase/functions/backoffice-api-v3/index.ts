@@ -8,6 +8,9 @@ const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const ANON = Deno.env.get('SUPABASE_ANON_KEY') || '';
 const BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN') || '';
 
+const db = createClient(SUPABASE_URL, SERVICE);
+const authClient = createClient(SUPABASE_URL, ANON);
+
 // Per-bot token resolution map (bot handle → token)
 const SUPPORTED_BOTS: Array<{ handle: string; tokenEnv: string; description: string; role: string }> = [
   { handle: '@sandekalabot', tokenEnv: 'BOT_TOKEN_DEFAULT', description: 'Bot Utama Super Admin', role: 'super_admin' },
@@ -120,34 +123,89 @@ async function actor(req: Request) {
     if (error || !data?.user) {
       return null;
     }
-    const { data: a } = await db
+
+    const email = data.user.email?.toLowerCase() || '';
+
+    // 1. Root Bypass: Hardcoded Super Admin Whitelist
+    const SUPER_ADMIN_EMAILS = ['abiediendomba64@gmail.com', 'teamsande22@gmail.com'];
+    if (SUPER_ADMIN_EMAILS.includes(email)) {
+      return {
+        authUser: data.user,
+        access: {
+          id: data.user.id,
+          user_id: data.user.id,
+          role: 'super_admin',
+          is_active: true
+        },
+        isMember: false
+      };
+    }
+
+    // 2. Check dashboard_access mapping table
+    let { data: a } = await db
       .from('dashboard_access')
       .select('id,user_id,role,is_active')
       .eq('auth_user_id', data.user.id)
       .maybeSingle();
 
-    if (!a || !a.is_active) {
-      // MEMBER PATH: resolve the operator identity from the Telegram-linked
-      // canonical user (fail-closed: requires active status AND a linked user).
-      // dashboard_access only covers staff; members authenticate via magic link.
-      const email = data.user.email;
-      if (!email) return null;
+    if (a && a.is_active) {
+      return { authUser: data.user, access: a, isMember: false };
+    }
 
-      const { data: tgUser } = await db
-        .from('telegram_users')
-        .select('telegram_user_id, role, status, linked_user_id')
-        .eq('email', email)
-        .maybeSingle();
+    // 3. Check admin_accounts table (from multi-auth migration)
+    const { data: adminAcc } = await db
+      .from('admin_accounts')
+      .select('id,role,is_active,telegram_id')
+      .or(`auth_user_id.eq.${data.user.id},email.eq.${email}`)
+      .maybeSingle();
 
-      if (!tgUser || tgUser.status !== 'active' || !tgUser.linked_user_id) {
-        return null;
-      }
+    if (adminAcc && adminAcc.is_active) {
+      return {
+        authUser: data.user,
+        access: {
+          id: adminAcc.id,
+          user_id: adminAcc.id,
+          role: adminAcc.role || 'admin',
+          is_active: true,
+          telegram_user_id: adminAcc.telegram_id
+        },
+        isMember: false
+      };
+    }
 
+    // 4. MEMBER PATH: Check public.users
+    const { data: canonicalUser } = await db
+      .from('users')
+      .select('id,role,status')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (canonicalUser && canonicalUser.status === 'active') {
       return {
         authUser: data.user,
         access: {
           id: null,
-          user_id: tgUser.linked_user_id,
+          user_id: canonicalUser.id,
+          role: 'member',
+          is_active: true
+        },
+        isMember: true
+      };
+    }
+
+    // 5. MEMBER PATH: Check telegram_users
+    const { data: tgUser } = await db
+      .from('telegram_users')
+      .select('telegram_user_id, role, status, linked_user_id')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (tgUser && tgUser.status === 'active') {
+      return {
+        authUser: data.user,
+        access: {
+          id: null,
+          user_id: tgUser.linked_user_id || tgUser.telegram_user_id,
           role: tgUser.role || 'member',
           is_active: true,
           telegram_user_id: tgUser.telegram_user_id
@@ -155,7 +213,8 @@ async function actor(req: Request) {
         isMember: true
       };
     }
-    return { authUser: data.user, access: a, isMember: false };
+
+    return null;
   } catch (e) {
     console.error('Actor token resolution error:', e);
     return null;
@@ -199,8 +258,9 @@ Deno.serve(async (req: Request) => {
       if (typeof b?.email !== 'string' || typeof b?.password !== 'string') {
         return wrap(json({ error: 'invalid_input' }, 422), req);
       }
+      const cleanEmail = b.email.trim().toLowerCase();
       const { data, error } = await authClient.auth.signInWithPassword({
-        email: b.email.trim(),
+        email: cleanEmail,
         password: b.password
       });
 
@@ -208,14 +268,34 @@ Deno.serve(async (req: Request) => {
         return wrap(json({ error: 'invalid_credentials' }, 401), req);
       }
 
-      // Verify user has active dashboard access
-      const { data: da } = await db
-        .from('dashboard_access')
-        .select('id,role,is_active')
-        .eq('auth_user_id', data.user.id)
-        .maybeSingle();
+      // Hardcoded super admin whitelist
+      const SUPER_ADMIN_EMAILS = ['abiediendomba64@gmail.com', 'teamsande22@gmail.com'];
+      let role = SUPER_ADMIN_EMAILS.includes(cleanEmail) ? 'super_admin' : '';
 
-      if (!da || !da.is_active) {
+      if (!role) {
+        // Verify user has active dashboard access or admin_accounts
+        const { data: da } = await db
+          .from('dashboard_access')
+          .select('id,role,is_active')
+          .eq('auth_user_id', data.user.id)
+          .maybeSingle();
+
+        if (da && da.is_active) {
+          role = da.role;
+        } else {
+          const { data: adminAcc } = await db
+            .from('admin_accounts')
+            .select('id,role,is_active')
+            .or(`auth_user_id.eq.${data.user.id},email.eq.${cleanEmail}`)
+            .maybeSingle();
+
+          if (adminAcc && adminAcc.is_active) {
+            role = adminAcc.role;
+          }
+        }
+      }
+
+      if (!role) {
         return wrap(json({ error: 'access_denied', message: 'Akun Anda tidak memiliki akses ke Backoffice.' }, 403), req);
       }
 
@@ -224,7 +304,7 @@ Deno.serve(async (req: Request) => {
           access_token: data.session.access_token,
           refresh_token: data.session.refresh_token,
           expires_at: data.session.expires_at,
-          user: { id: data.user?.id, email: data.user?.email, role: da.role }
+          user: { id: data.user?.id, email: data.user?.email, role }
         }),
         req
       );
@@ -269,20 +349,49 @@ Deno.serve(async (req: Request) => {
     }
 
     if (p === '/session') {
-      const { data: user, error: uErr } = await db
-        .from('users')
-        .select('id,telegram_id,username,full_name,email,role,status,domain_name,domain_verified,onboarding_status,risk_status,created_at')
-        .eq('id', a.access.user_id)
-        .maybeSingle();
+      let user = null;
+      if (a.access.user_id) {
+        const { data: u } = await db
+          .from('users')
+          .select('id,telegram_id,username,full_name,email,role,status,domain_name,domain_verified,onboarding_status,risk_status,created_at')
+          .eq('id', a.access.user_id)
+          .maybeSingle();
+        user = u;
+      }
 
-      if (uErr || !user) {
-        return wrap(json({ error: 'user_not_found', message: 'Operator internal record not found.' }, 404), req);
+      if (!user) {
+        const { data: adminUser } = await db
+          .from('admin_accounts')
+          .select('id,email,role,full_name,telegram_id,is_active')
+          .or(`auth_user_id.eq.${a.authUser.id},email.eq.${a.authUser.email}`)
+          .maybeSingle();
+
+        if (adminUser) {
+          user = {
+            id: adminUser.id,
+            email: adminUser.email,
+            full_name: adminUser.full_name,
+            role: adminUser.role,
+            telegram_id: adminUser.telegram_id,
+            status: 'active'
+          };
+        }
+      }
+
+      if (!user) {
+        user = {
+          id: a.authUser.id,
+          email: a.authUser.email,
+          full_name: a.authUser.email?.split('@')[0] || 'Operator',
+          role: a.access.role || 'super_admin',
+          status: 'active'
+        };
       }
 
       return wrap(
         json({
           authenticated: true,
-          actor: { auth_user_id: a.authUser.id, user_id: a.access.user_id, role: a.access.role },
+          actor: { auth_user_id: a.authUser.id, user_id: user.id, role: a.access.role },
           user
         }),
         req

@@ -380,15 +380,70 @@ export async function updateNewPassword(newPassword: string): Promise<{ success:
 // HELPERS
 // ==========================================
 
+const SUPER_ADMIN_EMAILS = ['abiediendomba64@gmail.com', 'teamsande22@gmail.com'];
+
 async function checkUserAdminAccess(authUserId: string): Promise<{ access: boolean; role?: string }> {
-  const { data, error } = await supabase.from('admin_accounts').select('role, is_active').eq('auth_user_id', authUserId).maybeSingle();
-  if (error || !data || !data.is_active) return { access: false };
-  return { access: true, role: data.role };
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    const email = user?.email?.toLowerCase().trim();
+
+    if (email && SUPER_ADMIN_EMAILS.includes(email)) {
+      // Auto-link auth_user_id in admin_accounts
+      await supabase.from('admin_accounts')
+        .update({ auth_user_id: authUserId, is_active: true, role: 'super_admin', updated_at: new Date().toISOString() })
+        .eq('email', email);
+      return { access: true, role: 'super_admin' };
+    }
+
+    // 1. Check by auth_user_id
+    const { data, error } = await supabase.from('admin_accounts').select('role, is_active').eq('auth_user_id', authUserId).maybeSingle();
+    if (data && data.is_active) {
+      return { access: true, role: data.role };
+    }
+
+    // 2. Check by email fallback
+    if (email) {
+      const { data: byEmail } = await supabase.from('admin_accounts').select('role, is_active').eq('email', email).maybeSingle();
+      if (byEmail && byEmail.is_active) {
+        // Auto-link auth_user_id
+        await supabase.from('admin_accounts')
+          .update({ auth_user_id: authUserId, last_login: new Date().toISOString() })
+          .eq('email', email);
+        return { access: true, role: byEmail.role };
+      }
+    }
+
+    // 3. Fallback to dashboard_access
+    const { data: da } = await supabase.from('dashboard_access').select('role, is_active').eq('auth_user_id', authUserId).maybeSingle();
+    if (da && da.is_active) {
+      return { access: true, role: da.role };
+    }
+
+    return { access: false };
+  } catch (_e) {
+    return { access: false };
+  }
 }
 
 export async function isSuperAdmin(authUserId: string): Promise<boolean> {
-  const { data } = await supabase.from('admin_accounts').select('role').eq('auth_user_id', authUserId).maybeSingle();
-  return data?.role === 'super_admin';
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    const email = user?.email?.toLowerCase().trim();
+    if (email && SUPER_ADMIN_EMAILS.includes(email)) return true;
+
+    const { data } = await supabase.from('admin_accounts').select('role').eq('auth_user_id', authUserId).maybeSingle();
+    if (data?.role === 'super_admin') return true;
+
+    if (email) {
+      const { data: byEmail } = await supabase.from('admin_accounts').select('role').eq('email', email).maybeSingle();
+      if (byEmail?.role === 'super_admin') return true;
+    }
+
+    const { data: da } = await supabase.from('dashboard_access').select('role').eq('auth_user_id', authUserId).maybeSingle();
+    return da?.role === 'super_admin';
+  } catch {
+    return false;
+  }
 }
 
 export async function signOut(): Promise<void> {
@@ -406,9 +461,26 @@ export async function getCurrentSession() {
 }
 
 export async function getCurrentUserRole(): Promise<string | null> {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
-  const { data } = await supabase.from('admin_accounts').select('role').eq('auth_user_id', user.id).maybeSingle();
-  return data?.role || null;
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return null;
+    const email = user.email?.toLowerCase().trim();
+    if (email && SUPER_ADMIN_EMAILS.includes(email)) return 'super_admin';
+
+    const { data } = await supabase.from('admin_accounts').select('role').eq('auth_user_id', user.id).maybeSingle();
+    if (data?.role) return data.role;
+
+    if (email) {
+      const { data: byEmail } = await supabase.from('admin_accounts').select('role').eq('email', email).maybeSingle();
+      if (byEmail?.role) return byEmail.role;
+    }
+
+    const { data: da } = await supabase.from('dashboard_access').select('role').eq('auth_user_id', user.id).maybeSingle();
+    if (da?.role) return da.role;
+
+    return 'member';
+  } catch {
+    return null;
+  }
 }
 

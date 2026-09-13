@@ -265,16 +265,40 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 // API CLIENT
 // ==========================================
 async function api<T>(url: string, init: RequestInit = {}): Promise<T> { 
-  const token = localStorage.getItem('backoffice_access_token'); 
+  let token = localStorage.getItem('backoffice_access_token'); 
+  if (!token) {
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.access_token) {
+        token = data.session.access_token;
+        localStorage.setItem('backoffice_access_token', token);
+      }
+    } catch (_) {}
+  }
 
   const h = new Headers(init.headers); 
   h.set('content-type', 'application/json'); 
   if (token) h.set('authorization', `Bearer ${token}`); 
   
   try {
-    const r = await fetch(`${API_BASE}${url}`, { ...init, headers: h }); 
+    let r = await fetch(`${API_BASE}${url}`, { ...init, headers: h }); 
     if (r.status === 401) {
-      localStorage.removeItem('backoffice_access_token'); 
+      try {
+        const { data } = await supabase.auth.refreshSession();
+        if (data?.session?.access_token) {
+          token = data.session.access_token;
+          localStorage.setItem('backoffice_access_token', token);
+          h.set('authorization', `Bearer ${token}`);
+          r = await fetch(`${API_BASE}${url}`, { ...init, headers: h });
+        }
+      } catch (_) {}
+    }
+
+    if (r.status === 401) {
+      const role = localStorage.getItem('user_role');
+      if (role !== 'member' && !window.location.pathname.toLowerCase().startsWith('/member')) {
+        localStorage.removeItem('backoffice_access_token'); 
+      }
       throw new Error('401 Unauthorized — sesi kedaluwarsa atau akun belum memiliki dashboard_access');
     } 
     if (!r.ok) {
@@ -549,30 +573,31 @@ export default function App() {
     const currentTgId = localStorage.getItem('user_tg_id');
 
     if (currentToken) {
-      // SECURITY: No bypass tokens allowed. Session validity is verified server-side via /session.
-      // Member role is no longer validated via localStorage member_registrations.
-
-      // Sync User Session Profile from Backend
-      api<any>('/session')
-        .then(res => {
-          if (res?.actor) {
-            const role = res.actor.role === 'root' ? 'super_admin' : res.actor.role;
-            setCurrentUserRole(role);
-            localStorage.setItem('user_role', role);
-          }
-          if (res?.user) {
-            const name = res.user.full_name || res.user.username || 'Pengguna';
-            setCurrentUserName(name);
-            localStorage.setItem('user_name', name);
-            if (res.user.telegram_id) {
-              setCurrentUserTelegramId(String(res.user.telegram_id));
-              localStorage.setItem('user_tg_id', String(res.user.telegram_id));
+      if (currentRole === 'member' || window.location.pathname.toLowerCase().startsWith('/member')) {
+        setAuthenticated(true);
+      } else {
+        // Sync User Session Profile from Backend for Admin
+        api<any>('/session')
+          .then(res => {
+            if (res?.actor) {
+              const role = res.actor.role === 'root' ? 'super_admin' : res.actor.role;
+              setCurrentUserRole(role);
+              localStorage.setItem('user_role', role);
             }
-          }
-        })
-        .catch(err => {
-          console.warn('Session profile sync note:', err);
-        });
+            if (res?.user) {
+              const name = res.user.full_name || res.user.username || 'Pengguna';
+              setCurrentUserName(name);
+              localStorage.setItem('user_name', name);
+              if (res.user.telegram_id) {
+                setCurrentUserTelegramId(String(res.user.telegram_id));
+                localStorage.setItem('user_tg_id', String(res.user.telegram_id));
+              }
+            }
+          })
+          .catch(err => {
+            console.warn('Session profile sync note:', err);
+          });
+      }
     } else {
       setAuthenticated(false);
     }
@@ -654,6 +679,15 @@ export default function App() {
     setLoading(true); 
     setError(''); 
     try { 
+      const isMember = currentUserRole === 'member' || window.location.pathname.toLowerCase().startsWith('/member');
+      if (isMember) {
+        const tRes = await supabase.from('tickets').select('*').order('created_at', { ascending: false });
+        const pRes = await supabase.from('payments').select('*').order('created_at', { ascending: false });
+        setTickets((tRes.data as any) || []);
+        setPayments((pRes.data as any) || []);
+        return;
+      }
+
       const [s, u, t, p, f] = await Promise.all([
         api<Stats>('/stats'),
         api<User[]>('/users'),
