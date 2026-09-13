@@ -84,14 +84,23 @@ export async function getTelegramNotifications(): Promise<TelegramNotificationRe
   if (isSupabaseConfigured) {
     try {
       const { data, error } = await supabase
-        .from('telegram_notifications')
+        .from('telegram_notification_log')
         .select('*')
-        .order('timestamp', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(100);
       if (!error && data && data.length > 0) {
-        return data as TelegramNotificationRecord[];
+        return data.map((d: any) => ({
+          id: String(d.id),
+          timestamp: d.created_at || new Date().toISOString(),
+          recipient: d.recipient || d.bot_handle || 'Telegram',
+          message: d.message_snippet || d.message || '',
+          status: d.dispatch_status === 'sent' ? 'Sent' : d.dispatch_status === 'failed' ? 'Failed' : 'Pending',
+          channelType: d.channel_type || 'admin_private',
+          error: d.error_details
+        }));
       }
     } catch (e) {
-      console.warn('Supabase telegram_notifications fetch failed', e);
+      console.warn('Supabase telegram_notification_log fetch failed', e);
     }
   }
   return [];
@@ -142,7 +151,7 @@ export async function sendTelegramNotification(
     return res.notification;
   }
   return {
-    id: `temp-${Date.now()}`,
+    id: `notif-${Date.now()}`,
     timestamp: new Date().toISOString(),
     recipient,
     message,
@@ -165,11 +174,6 @@ export async function sendPaymentVerifiedNotification(
   // 1. Notifikasi Admin / Super Admin / Dev (Detail Finansial Privat)
   const adminMessage = `💳 [PAYROLL VERIFIED] Pembayaran #${paymentId} untuk User ID #${userId} senilai Rp ${amount} telah DISETUJUI oleh ${operatorName}.`;
   await sendTelegramNotification('@sandekalabot (Admin & Dev Channel)', adminMessage, 'admin_private');
-
-  // 2. NOT ada broadcast publik ke member (@mrssandebot). Pembayaran = internal.
-  //    Jika admin/server perlu target ekstra, dikirim hanya ke admin_chat_ids.
-
-  // The Edge function should ideally handle this audit log automatically, but for now we rely on DB triggers/RPCs
 }
 
 export async function logAuditAction(
@@ -178,11 +182,8 @@ export async function logAuditAction(
   severity: 'info' | 'warn' | 'error', 
   user: string = 'Abied Iendomba'
 ): Promise<AuditLog> {
-  // Client-side generated audit logs are deprecated.
-  // The server edge functions handle audit logging during mutations.
-  // We return a mock placeholder for UI compatibility.
-  return {
-    id: `temp-${Date.now()}`,
+  const newLog: AuditLog = {
+    id: `audit-${Date.now()}`,
     timestamp: new Date().toISOString(),
     user,
     action,
@@ -190,6 +191,23 @@ export async function logAuditAction(
     severity,
     ipAddress: '127.0.0.1'
   };
+
+  try {
+    const rawId = target.includes(':') ? target.split(':')[1] : null;
+    const resId = rawId && /^\d+$/.test(rawId) ? parseInt(rawId, 10) : null;
+    await supabase.from('audit_logs').insert([{
+      action_type: action,
+      resource_type: target.split(':')[0] || 'system',
+      resource_id: resId,
+      actor_role: 'super_admin',
+      reason: severity,
+      new_value: { target, user }
+    }]);
+  } catch (e) {
+    console.warn('Direct audit log write note:', e);
+  }
+
+  return newLog;
 }
 
 /**

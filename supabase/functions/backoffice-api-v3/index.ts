@@ -126,21 +126,6 @@ async function actor(req: Request) {
 
     const email = data.user.email?.toLowerCase() || '';
 
-    // 1. Root Bypass: Hardcoded Super Admin Whitelist
-    const SUPER_ADMIN_EMAILS = ['abiediendomba64@gmail.com', 'teamsande22@gmail.com'];
-    if (SUPER_ADMIN_EMAILS.includes(email)) {
-      return {
-        authUser: data.user,
-        access: {
-          id: data.user.id,
-          user_id: data.user.id,
-          role: 'super_admin',
-          is_active: true
-        },
-        isMember: false
-      };
-    }
-
     // 2. Check dashboard_access mapping table
     let { data: a } = await db
       .from('dashboard_access')
@@ -153,11 +138,13 @@ async function actor(req: Request) {
     }
 
     // 3. Check admin_accounts table (from multi-auth migration)
-    const { data: adminAcc } = await db
-      .from('admin_accounts')
-      .select('id,role,is_active,telegram_id')
-      .or(`auth_user_id.eq.${data.user.id},email.eq.${email}`)
-      .maybeSingle();
+    let adminQuery = db.from('admin_accounts').select('id,role,is_active,telegram_id');
+    if (email) {
+      adminQuery = adminQuery.or(`auth_user_id.eq.${data.user.id},email.eq.${email}`);
+    } else {
+      adminQuery = adminQuery.eq('auth_user_id', data.user.id);
+    }
+    const { data: adminAcc } = await adminQuery.maybeSingle();
 
     if (adminAcc && adminAcc.is_active) {
       return {
@@ -174,11 +161,15 @@ async function actor(req: Request) {
     }
 
     // 4. MEMBER PATH: Check public.users
-    const { data: canonicalUser } = await db
-      .from('users')
-      .select('id,role,status')
-      .eq('email', email)
-      .maybeSingle();
+    let canonicalUser = null;
+    if (email) {
+      const { data } = await db
+        .from('users')
+        .select('id,role,status')
+        .eq('email', email)
+        .maybeSingle();
+      canonicalUser = data;
+    }
 
     if (canonicalUser && canonicalUser.status === 'active') {
       return {
@@ -194,11 +185,15 @@ async function actor(req: Request) {
     }
 
     // 5. MEMBER PATH: Check telegram_users
-    const { data: tgUser } = await db
-      .from('telegram_users')
-      .select('telegram_user_id, role, status, linked_user_id')
-      .eq('email', email)
-      .maybeSingle();
+    let tgUser = null;
+    if (email) {
+      const { data } = await db
+        .from('telegram_users')
+        .select('telegram_user_id, role, status, linked_user_id')
+        .eq('email', email)
+        .maybeSingle();
+      tgUser = data;
+    }
 
     if (tgUser && tgUser.status === 'active') {
       return {
@@ -268,9 +263,7 @@ Deno.serve(async (req: Request) => {
         return wrap(json({ error: 'invalid_credentials' }, 401), req);
       }
 
-      // Hardcoded super admin whitelist
-      const SUPER_ADMIN_EMAILS = ['abiediendomba64@gmail.com', 'teamsande22@gmail.com'];
-      let role = SUPER_ADMIN_EMAILS.includes(cleanEmail) ? 'super_admin' : '';
+      let role = '';
 
       if (!role) {
         // Verify user has active dashboard access or admin_accounts
@@ -360,11 +353,13 @@ Deno.serve(async (req: Request) => {
       }
 
       if (!user) {
-        const { data: adminUser } = await db
-          .from('admin_accounts')
-          .select('id,email,role,full_name,telegram_id,is_active')
-          .or(`auth_user_id.eq.${a.authUser.id},email.eq.${a.authUser.email}`)
-          .maybeSingle();
+        let adminQuery = db.from('admin_accounts').select('id,email,role,full_name,telegram_id,is_active');
+        if (a.authUser.email) {
+          adminQuery = adminQuery.or(`auth_user_id.eq.${a.authUser.id},email.eq.${a.authUser.email}`);
+        } else {
+          adminQuery = adminQuery.eq('auth_user_id', a.authUser.id);
+        }
+        const { data: adminUser } = await adminQuery.maybeSingle();
 
         if (adminUser) {
           user = {
@@ -449,6 +444,7 @@ Deno.serve(async (req: Request) => {
       '/tickets': 'tickets',
       '/payments': 'payments',
       '/domains': 'domain_inventory',
+      '/claims': 'claims',
       '/audit': 'audit_logs',
       '/forum-topics': 'forum_topics'
     };
@@ -459,7 +455,7 @@ Deno.serve(async (req: Request) => {
       // MEMBER DATA SCOPING (fail-closed): a member may only read rows they own.
       // Operational/admin tables are not exposed to member sessions at all.
       if (a.isMember) {
-        const memberAllowed = new Set(['/tickets', '/payments', '/forum-topics']);
+        const memberAllowed = new Set(['/tickets', '/payments', '/forum-topics', '/domains', '/claims']);
         if (!memberAllowed.has(p)) {
           return wrap(json([]), req);
         }
@@ -467,7 +463,7 @@ Deno.serve(async (req: Request) => {
 
       try {
         let q = db.from(table).select('*').limit(500);
-        if (a.isMember && (p === '/tickets' || p === '/payments')) {
+        if (a.isMember && (p === '/tickets' || p === '/payments' || p === '/domains' || p === '/claims')) {
           q = q.eq('user_id', a.access.user_id);
         }
         const orderCol = table === 'tickets' ? 'updated_at' : 'created_at';
@@ -538,8 +534,14 @@ Deno.serve(async (req: Request) => {
         return wrap(json({ error: 'invalid_input', message: 'Bank dan nomor rekening wajib diisi.' }, 422), req);
       }
       try {
+        const tgId = a.access?.telegram_user_id ? Number(a.access.telegram_user_id) : null;
+        const claimNum = 'CLM-' + Date.now().toString(36).toUpperCase();
+        const desc = description || `Klaim transfer gaji sebesar Rp ${amount.toLocaleString('id-ID')}. Payout otomatis 75% = Rp ${payoutAmount.toLocaleString('id-ID')}.`;
+
         const { data, error } = await db.from('claims').insert([{
-          telegram_user_id: a.authUser.id,
+          claim_number: claimNum,
+          submitted_by: a.authUser.id,
+          telegram_user_id: tgId,
           user_id: a.access.user_id,
           claim_type: 'salary',
           amount,
@@ -548,7 +550,9 @@ Deno.serve(async (req: Request) => {
           account_number: account,
           status: 'pending',
           evidence_required: !!fileName,
-          description: description || `Klaim transfer gaji sebesar Rp ${amount.toLocaleString('id-ID')}. Payout otomatis 75% = Rp ${payoutAmount.toLocaleString('id-ID')}.`,
+          description: desc,
+          notes: desc,
+          evidence_path: fileName || null,
           collected_data: {
             source: 'backoffice_web',
             file_name: fileName,
@@ -899,6 +903,99 @@ Deno.serve(async (req: Request) => {
         status: 'DEGRADED',
         message: 'Broadcast queue service is awaiting worker deployment.'
       }, 501), req);
+    }
+
+    // ============ SERVER-SIDE ADMIN ACCOUNT MANAGEMENT ============
+    // Replaces unsafe client-side calls to supabase.auth.admin.*
+    if (p.startsWith('/admin/users')) {
+      if (a.access.role !== 'root' && a.access.role !== 'super_admin') {
+        return wrap(json({ error: 'forbidden', message: 'Hanya Super Admin yang dapat mengelola akun operator.' }, 403), req);
+      }
+
+      if (p === '/admin/users/create' && req.method === 'POST') {
+        const body = await req.json();
+        const { email, password, role, fullName, telegramId } = body;
+        if (!email || !password || !fullName) {
+          return wrap(json({ error: 'invalid_input', message: 'Email, password, dan nama wajib diisi.' }, 422), req);
+        }
+
+        const { data: authData, error: authError } = await db.auth.admin.createUser({
+          email: email.trim().toLowerCase(),
+          password,
+          email_confirm: true,
+          user_metadata: { full_name: fullName, role: role || 'admin', telegram_id: telegramId }
+        });
+
+        if (authError) {
+          return wrap(json({ error: authError.message }, 400), req);
+        }
+
+        const { error: dbError } = await db.from('admin_accounts').insert({
+          auth_user_id: authData.user.id,
+          email: email.trim().toLowerCase(),
+          role: role || 'admin',
+          telegram_id: telegramId ? Number(telegramId) : null,
+          full_name: fullName,
+          is_active: true
+        });
+
+        if (dbError) {
+          return wrap(json({ error: dbError.message }, 400), req);
+        }
+
+        return wrap(json({ success: true, user: authData.user }), req);
+      }
+
+      if (p === '/admin/users/update' && req.method === 'PUT') {
+        const body = await req.json();
+        const { adminId, updates } = body;
+        if (!adminId || !updates) {
+          return wrap(json({ error: 'invalid_input', message: 'ID akun dan data perubahan wajib diisi.' }, 422), req);
+        }
+
+        const { error } = await db.from('admin_accounts')
+          .update({ ...updates, updated_at: new Date().toISOString() })
+          .eq('id', adminId);
+
+        if (error) {
+          return wrap(json({ error: error.message }, 400), req);
+        }
+        return wrap(json({ success: true }), req);
+      }
+
+      if (p === '/admin/users/reset-password' && req.method === 'POST') {
+        const body = await req.json();
+        const { adminId, newPassword } = body;
+        if (!adminId || !newPassword) {
+          return wrap(json({ error: 'invalid_input', message: 'ID admin dan password baru wajib diisi.' }, 422), req);
+        }
+
+        const { data: acc } = await db.from('admin_accounts').select('auth_user_id').eq('id', adminId).maybeSingle();
+        const targetAuthUid = acc?.auth_user_id || adminId;
+
+        const { error } = await db.auth.admin.updateUserById(targetAuthUid, { password: newPassword });
+        if (error) {
+          return wrap(json({ error: error.message }, 400), req);
+        }
+        return wrap(json({ success: true }), req);
+      }
+
+      if (p === '/admin/users/delete' && req.method === 'DELETE') {
+        const body = await req.json();
+        const { adminId } = body;
+        if (!adminId) {
+          return wrap(json({ error: 'invalid_input', message: 'ID admin wajib diisi.' }, 422), req);
+        }
+
+        const { data: acc } = await db.from('admin_accounts').select('auth_user_id').eq('id', adminId).maybeSingle();
+        const targetAuthUid = acc?.auth_user_id || adminId;
+
+        await db.from('admin_accounts').delete().eq('id', adminId);
+        await db.from('dashboard_access').delete().eq('auth_user_id', targetAuthUid);
+        await db.auth.admin.deleteUser(targetAuthUid).catch(() => {});
+
+        return wrap(json({ success: true }), req);
+      }
     }
 
     return wrap(json({ error: 'not_found' }, 404), req);

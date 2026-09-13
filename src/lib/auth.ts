@@ -380,20 +380,10 @@ export async function updateNewPassword(newPassword: string): Promise<{ success:
 // HELPERS
 // ==========================================
 
-const SUPER_ADMIN_EMAILS = ['abiediendomba64@gmail.com', 'teamsande22@gmail.com'];
-
 async function checkUserAdminAccess(authUserId: string): Promise<{ access: boolean; role?: string }> {
   try {
     const { data: { user } } = await supabase.auth.getUser();
     const email = user?.email?.toLowerCase().trim();
-
-    if (email && SUPER_ADMIN_EMAILS.includes(email)) {
-      // Auto-link auth_user_id in admin_accounts
-      await supabase.from('admin_accounts')
-        .update({ auth_user_id: authUserId, is_active: true, role: 'super_admin', updated_at: new Date().toISOString() })
-        .eq('email', email);
-      return { access: true, role: 'super_admin' };
-    }
 
     // 1. Check by auth_user_id
     const { data, error } = await supabase.from('admin_accounts').select('role, is_active').eq('auth_user_id', authUserId).maybeSingle();
@@ -429,7 +419,6 @@ export async function isSuperAdmin(authUserId: string): Promise<boolean> {
   try {
     const { data: { user } } = await supabase.auth.getUser();
     const email = user?.email?.toLowerCase().trim();
-    if (email && SUPER_ADMIN_EMAILS.includes(email)) return true;
 
     const { data } = await supabase.from('admin_accounts').select('role').eq('auth_user_id', authUserId).maybeSingle();
     if (data?.role === 'super_admin') return true;
@@ -465,7 +454,6 @@ export async function getCurrentUserRole(): Promise<string | null> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return null;
     const email = user.email?.toLowerCase().trim();
-    if (email && SUPER_ADMIN_EMAILS.includes(email)) return 'super_admin';
 
     const { data } = await supabase.from('admin_accounts').select('role').eq('auth_user_id', user.id).maybeSingle();
     if (data?.role) return data.role;

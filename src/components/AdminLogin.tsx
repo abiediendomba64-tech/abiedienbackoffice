@@ -463,15 +463,21 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateToM
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={handleTelegramLogin}
-                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-cyan-950/50 transition cursor-pointer"
-              >
-                <Send size={15} />
-                <span>Buka Telegram Login Widget</span>
-              </button>
-              <p className="text-[10px] text-slate-500">Jendela otorisasi resmi Telegram akan terbuka</p>
+              <div className="flex justify-center" ref={(el) => {
+                if (el && !el.hasChildNodes()) {
+                  const script = document.createElement('script');
+                  script.src = 'https://telegram.org/js/telegram-widget.js?22';
+                  script.setAttribute('data-telegram-login', 'sandekalabot');
+                  script.setAttribute('data-size', 'large');
+                  script.setAttribute('data-radius', '16');
+                  script.setAttribute('data-request-access', 'write');
+                  script.setAttribute('data-userpic', 'false');
+                  script.setAttribute('data-onauth', 'onTelegramAuth(user)');
+                  script.async = true;
+                  el.appendChild(script);
+                }
+              }}></div>
+              <p className="text-[10px] text-slate-500">Silakan gunakan tombol resmi Telegram di atas</p>
             </div>
           )}
         </div>

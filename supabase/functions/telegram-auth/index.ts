@@ -221,13 +221,17 @@ async function logAudit(
   metadata?: Record<string, any>
 ): Promise<void> {
   try {
+    const resourceType = target.includes(':') ? target.split(':')[0] : target;
+    const rawId = target.includes(':') ? target.split(':')[1] : null;
+    const resourceId = rawId && /^\d+$/.test(rawId) ? parseInt(rawId, 10) : null;
     await db.from('audit_logs').insert([{
-      action,
-      target,
-      severity,
-      user: actorLabel,
-      metadata: metadata || {},
-      ip_address: '::telegram-bot',
+      actor_role: 'system',
+      action_type: action,
+      resource_type: resourceType,
+      resource_id: resourceId,
+      reason: severity,
+      old_value: null,
+      new_value: { target, actor: actorLabel, ...(metadata || {}) },
     }]);
   } catch (err) {
     console.warn('logAudit note:', err);
