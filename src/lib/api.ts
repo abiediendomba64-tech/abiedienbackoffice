@@ -226,8 +226,8 @@ export async function claimTicket(ticketId: string, operatorName: string): Promi
   await invokeBackofficeApi('/tickets/mutate', { ticketId, newStatus: 'in_progress', assignedTo: null, notes: `Claimed by ${operatorName}` });
 }
 
-export async function assignTicket(ticketId: string, assigneeName: string, operatorName: string): Promise<void> {
-  await invokeBackofficeApi('/tickets/mutate', { ticketId, newStatus: 'in_progress', assignedTo: assigneeName, notes: `Assigned to ${assigneeName} by ${operatorName}` });
+export async function assignTicket(ticketId: string, assigneeId: number, operatorName: string): Promise<void> {
+  await invokeBackofficeApi('/tickets/mutate', { ticketId, newStatus: 'in_progress', assignedTo: assigneeId, notes: `Assigned by ${operatorName}` });
 }
 export async function resolveTicket(ticketId: string, resolutionNotes: string, operatorName: string): Promise<void> {
   await invokeBackofficeApi('/tickets/mutate', { ticketId, newStatus: 'resolved', resolutionNotes, notes: `Resolved by ${operatorName}` });
