@@ -222,15 +222,15 @@ export async function executeEmergencyAction(payload: EmergencyActionPayload): P
   }
 }
 
-export async function claimTicket(ticketId: string, operatorName: string): Promise<void> {
-  await invokeBackofficeApi('/tickets/mutate', { ticketId, newStatus: 'in_progress', assignedTo: null, notes: `Claimed by ${operatorName}` });
+export async function claimTicket(ticketId: number, operatorName: string): Promise<void> {
+  await invokeBackofficeApi('/admin/actions/execute', { action: 'CLAIM', ticket_id: ticketId, reason: `Claimed by ${operatorName}` });
 }
 
-export async function assignTicket(ticketId: string, assigneeId: number, operatorName: string): Promise<void> {
-  await invokeBackofficeApi('/tickets/mutate', { ticketId, newStatus: 'in_progress', assignedTo: assigneeId, notes: `Assigned by ${operatorName}` });
+export async function assignTicket(ticketId: number, assigneeId: number, operatorName: string): Promise<void> {
+  await invokeBackofficeApi('/admin/actions/execute', { action: 'ASSIGN', ticket_id: ticketId, assignee_id: assigneeId, reason: `Assigned by ${operatorName}` });
 }
-export async function resolveTicket(ticketId: string, resolutionNotes: string, operatorName: string): Promise<void> {
-  await invokeBackofficeApi('/tickets/mutate', { ticketId, newStatus: 'resolved', resolutionNotes, notes: `Resolved by ${operatorName}` });
+export async function resolveTicket(ticketId: number, resolutionNotes: string, operatorName: string): Promise<void> {
+  await invokeBackofficeApi('/admin/actions/execute', { action: 'RESOLVE', ticket_id: ticketId, reason: resolutionNotes || `Resolved by ${operatorName}` });
 }
 
 

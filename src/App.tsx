@@ -330,15 +330,15 @@ async function executeAdminAction(payload: {
   });
 }
 
-async function claimTicketApi(id: number | string) {
+async function claimTicketApi(id: number) {
   return executeAdminAction({ ticket_id: id, action: 'CLAIM' });
 }
 
-async function resolveTicketApi(id: number | string, resolution_notes: string) {
+async function resolveTicketApi(id: number, resolution_notes: string) {
   return executeAdminAction({ ticket_id: id, action: 'RESOLVE', reason: resolution_notes });
 }
 
-async function replyTicketApi(id: number | string, message: string) {
+async function replyTicketApi(id: number, message: string) {
   if (!message || message.trim().length === 0) {
     throw new Error('Pesan balasan tidak boleh kosong');
   }
@@ -6255,7 +6255,7 @@ function DetailDrawer({ data, close, onMutateSuccess }: { data: any; close: () =
       setReplyMessage('');
       close();
     } catch (e: any) {
-      onMutateSuccess(e.message || 'Gagal kirim balasan');
+      alert(e.message || 'Gagal kirim balasan');
     } finally {
       setBusy(false);
     }

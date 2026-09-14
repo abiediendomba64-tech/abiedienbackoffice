@@ -449,7 +449,7 @@ Deno.serve(async (req: Request) => {
       '/forum-topics': 'forum_topics'
     };
 
-    if (routes[p]) {
+    if (routes[p] && req.method === 'GET') {
       const table = routes[p];
 
       // MEMBER DATA SCOPING (fail-closed): a member may only read rows they own.
@@ -740,6 +740,30 @@ Deno.serve(async (req: Request) => {
           return wrap(json({ success: true, data, message: `${action} success` }), req);
         } catch (err: any) {
           return wrap(json({ error: err.message || 'transition_failed', message: err.message || 'Ticket transition failed.' }, 400), req);
+        }
+      }
+
+      // REPLY -> insert message and transition state atomically
+      if (action === 'REPLY') {
+        if (!await can(a, 'ticket.transition')) {
+          return wrap(json({ error: 'forbidden' }, 403), req);
+        }
+        const ticketId = Number(b.ticket_id || b.ticketId);
+        const message = typeof b.message === 'string' ? b.message : (typeof b.reason === 'string' ? b.reason : b.notes);
+        
+        if (!ticketId || !message) {
+          return wrap(json({ error: 'invalid_input', message: 'ticket_id and message required.' }, 422), req);
+        }
+        try {
+          const { data, error } = await db.rpc('reply_ticket_atomic', {
+            p_ticket_id: ticketId,
+            p_actor_id: a.access.user_id,
+            p_message: message
+          });
+          if (error) throw error;
+          return wrap(json({ success: true, data, message: `REPLY success` }), req);
+        } catch (err: any) {
+          return wrap(json({ error: err.message || 'reply_failed', message: err.message || 'Ticket reply failed.' }, 400), req);
         }
       }
 
