@@ -4,9 +4,42 @@ import { createClient } from 'npm:@supabase/supabase-js@2.57.0';
 
 declare const Deno: any;
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const ALLOWED_ORIGINS = [
+  'https://abiedienbackoffice.pages.dev',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000'
+];
+
+function getAllowedOrigin(origin?: string | null): string {
+  if (!origin) return 'https://abiedienbackoffice.pages.dev';
+  if (ALLOWED_ORIGINS.includes(origin)) return origin;
+  try {
+    const url = new URL(origin);
+    if (url.protocol === 'https:' && url.hostname.endsWith('.abiedienbackoffice.pages.dev')) {
+      return origin;
+    }
+  } catch {
+    // ignore
+  }
+  return 'https://abiedienbackoffice.pages.dev';
+}
+
+const getCorsHeaders = (req?: Request) => ({
+  'Access-Control-Allow-Origin': getAllowedOrigin(req?.headers?.get('origin')),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-telegram-bot-api-secret-token, x-health-secret, x-session-key',
+  'Access-Control-Allow-Credentials': 'true',
+  'Vary': 'Origin',
+});
+
+const corsHeaders = {
+  get 'Access-Control-Allow-Origin'() {
+    return 'https://abiedienbackoffice.pages.dev';
+  },
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-telegram-bot-api-secret-token, x-health-secret, x-session-key',
+  'Access-Control-Allow-Credentials': 'true',
+  'Vary': 'Origin',
 };
 
 // Telegram Endpoints
@@ -557,7 +590,7 @@ const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: getCorsHeaders(req) });
   }
 
   try {
