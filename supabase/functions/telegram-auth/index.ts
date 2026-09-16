@@ -1110,7 +1110,9 @@ Deno.serve(async (req: Request) => {
       }
 
       // /start or /menu command or Quick Menu button
-      if (text.startsWith('/start') || text.startsWith('/menu') || text === '🏠 Menu Utama') {
+      // NOTE: '/start login' (deep-link from t.me?start=login) MUST NOT be
+      // swallowed here — it is handled by the /login magic-link handler below.
+      if ((text.startsWith('/start') && text !== '/start login') || text.startsWith('/menu') || text === '🏠 Menu Utama') {
         if (!checkCapability(effectiveProfile, 'bot.start', canonicalUserId, isSuperAdmin)) {
            return new Response(JSON.stringify({ status: 'denied' }), { status: 200 });
         }

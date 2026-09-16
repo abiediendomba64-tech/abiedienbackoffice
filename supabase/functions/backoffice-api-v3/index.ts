@@ -370,14 +370,15 @@ Deno.serve(async (req: Request) => {
         }
       }
 
+      // Fail-closed: an authenticated caller with NO canonical row (users or
+      // admin_accounts) must not receive a fabricated profile. Never default
+      // to 'super_admin' — that was the SEC-03 fail-open in the integrity
+      // baseline. Return 403 so the client drops the session.
       if (!user) {
-        user = {
-          id: a.authUser.id,
-          email: a.authUser.email,
-          full_name: a.authUser.email?.split('@')[0] || 'Operator',
-          role: a.access.role || 'super_admin',
-          status: 'active'
-        };
+        return wrap(
+          json({ error: 'forbidden', message: 'Tidak ada profil canonical terkait sesi ini. Hubungi Super Admin.' }, 403),
+          req
+        );
       }
 
       return wrap(
