@@ -11,7 +11,8 @@ import {
   CheckCircle2, 
   AlertCircle,
   MessageCircle,
-  Crown
+  Crown,
+  ExternalLink
 } from 'lucide-react';
 import { 
   loginWithEmail, 
@@ -47,7 +48,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateToM
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
-  // Telegram Login Widget listener
+  // Telegram Login Widget listener & Popup receiver
   useEffect(() => {
     (window as any).onTelegramAuth = async (tgPayload: any) => {
       setLoading(true);
@@ -60,16 +61,14 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateToM
           return;
         }
 
-        const verification = await verifyAdminAccess();
-        if (!verification.allowed) {
-          await signOut();
-          setErrorMessage(verification.reason || 'Akses ditolak: Akun Telegram ini bukan Super Admin.');
+        const role = (res.role as any) || 'super_admin';
+        if (role !== 'super_admin' && role !== 'dev' && role !== 'admin') {
+          setErrorMessage('Akses ditolak: Akun Telegram ini bukan Super Admin / Staf terdaftar.');
           setLoading(false);
           return;
         }
 
-        const role = (verification.role as any) || 'super_admin';
-        const name = verification.full_name || tgPayload.first_name || 'Super Admin';
+        const name = res.user?.full_name || tgPayload.first_name || 'Super Admin';
         onSuccess(role, name, 'tg-admin-session');
       } catch (err: any) {
         setErrorMessage(err.message || 'Gagal verifikasi Telegram');
@@ -78,8 +77,28 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateToM
       }
     };
 
+    // Receive postMessage from popup OAuth window if completed
+    const handleMessage = (event: MessageEvent) => {
+      try {
+        let data = event.data;
+        if (typeof data === 'string') {
+          try { data = JSON.parse(data); } catch { return; }
+        }
+        if (data && (data.event === 'auth_result' || data.tgAuthResult || data.id)) {
+          const payload = data.result || data.tgAuthResult || data;
+          if (payload && payload.hash) {
+            (window as any).onTelegramAuth?.(payload);
+          }
+        }
+      } catch {
+        // ignore cross-origin noise
+      }
+    };
+    window.addEventListener('message', handleMessage);
+
     return () => {
       delete (window as any).onTelegramAuth;
+      window.removeEventListener('message', handleMessage);
     };
   }, [onSuccess]);
 
@@ -187,13 +206,6 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateToM
     } finally {
       setLoading(false);
     }
-  };
-
-  // 5. Telegram Widget Launch
-  const handleTelegramLogin = () => {
-    const redirectUrl = window.location.origin + '/admin/login';
-    const authUrl = `https://oauth.telegram.org/auth?bot_id=8849114090&origin=${encodeURIComponent(redirectUrl)}`;
-    window.open(authUrl, 'telegram_admin_auth', 'width=550,height=550,left=400,top=200');
   };
 
   return (
@@ -450,7 +462,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateToM
             </div>
           )}
 
-          {/* TAB CONTENT 3: TELEGRAM WIDGET */}
+          {/* TAB CONTENT 3: TELEGRAM WIDGET & BOT */}
           {activeTab === 'telegram' && (
             <div className="space-y-4 py-2 text-center animate-fade-in">
               <div className="p-4 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-xs text-cyan-200 text-left space-y-1">
@@ -459,25 +471,52 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateToM
                   <span>Otorisasi Telegram Super Admin</span>
                 </div>
                 <p className="text-[11px] text-slate-300">
-                  Gunakan akun Telegram yang telah terhubung dengan Chat ID Super Admin di bot <strong>@sandekalabot</strong>.
+                  Gunakan akun Telegram yang terdaftar sebagai Super Admin / Staf di bot resmi <strong>@sandekalabot</strong>.
                 </p>
               </div>
 
-              <div className="flex justify-center" ref={(el) => {
-                if (el && !el.hasChildNodes()) {
-                  const script = document.createElement('script');
-                  script.src = 'https://telegram.org/js/telegram-widget.js?22';
-                  script.setAttribute('data-telegram-login', 'sandekalabot');
-                  script.setAttribute('data-size', 'large');
-                  script.setAttribute('data-radius', '16');
-                  script.setAttribute('data-request-access', 'write');
-                  script.setAttribute('data-userpic', 'false');
-                  script.setAttribute('data-onauth', 'onTelegramAuth(user)');
-                  script.async = true;
-                  el.appendChild(script);
-                }
-              }}></div>
-              <p className="text-[10px] text-slate-500">Silakan gunakan tombol resmi Telegram di atas</p>
+              {/* METODE 1: BUKA BOT TELEGRAM SECARA LANGSUNG (100% RELIABLE) */}
+              <div className="space-y-2.5">
+                <a
+                  href="https://t.me/sandekalabot?start=login"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 hover:from-cyan-500 hover:via-blue-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-cyan-950/50 transition cursor-pointer"
+                >
+                  <Send size={16} />
+                  <span>Buka Bot @sandekalabot (Ketik /login)</span>
+                  <ExternalLink size={13} className="text-cyan-200" />
+                </a>
+
+                <div className="p-3.5 rounded-xl bg-black/30 border border-white/5 text-left text-[11px] text-slate-300 space-y-1.5">
+                  <div className="font-semibold text-cyan-300 flex items-center gap-1.5">
+                    <CheckCircle2 size={13} />
+                    <span>Langkah Masuk Cepat:</span>
+                  </div>
+                  <ol className="list-decimal list-inside space-y-1 text-slate-400 pl-1">
+                    <li>Klik tombol <strong className="text-white">Buka Bot @sandekalabot</strong> di atas.</li>
+                    <li>Kirim pesan <code className="px-1.5 py-0.5 rounded bg-white/10 text-cyan-200 font-mono">/login</code> di Telegram.</li>
+                    <li>Bot akan mengirimkan link <strong className="text-white">🚀 Masuk ke Dashboard</strong> untuk login otomatis.</li>
+                  </ol>
+                </div>
+              </div>
+
+              {/* PILIHAN TELEGRAM WEB */}
+              <div className="pt-2 border-t border-white/5 space-y-2.5">
+                <a
+                  href="https://web.telegram.org/k/#@sandekalabot"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-2.5 px-4 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-xs font-semibold border border-white/10 flex items-center justify-center gap-2 transition cursor-pointer"
+                >
+                  <Globe2 size={14} className="text-cyan-400" />
+                  <span>Buka di Telegram Web (Browser)</span>
+                  <ExternalLink size={12} className="text-slate-400" />
+                </a>
+                <p className="text-[10px] text-slate-500">
+                  🛡️ Otentikasi aman terenkripsi sekali pakai via Telegram Bot API resmi
+                </p>
+              </div>
             </div>
           )}
         </div>

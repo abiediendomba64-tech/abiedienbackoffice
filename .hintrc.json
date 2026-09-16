@@ -1,5 +1,4 @@
 {
-  "$schema": "https://webhint.io/schema.json",
   "extends": ["development"],
   "hints": {
     "meta-viewport": "off",

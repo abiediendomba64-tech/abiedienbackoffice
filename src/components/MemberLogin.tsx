@@ -15,7 +15,8 @@ import {
   Lock,
   Eye,
   EyeOff,
-  User
+  User,
+  ExternalLink
 } from 'lucide-react';
 import { 
   loginWithEmail, 
@@ -61,7 +62,7 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
-  // Telegram Login Widget listener
+  // Telegram Login Widget listener & Popup receiver
   useEffect(() => {
     (window as any).onTelegramAuth = async (tgPayload: any) => {
       setLoading(true);
@@ -74,8 +75,7 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
           return;
         }
 
-        const verification = await verifyMemberAccess();
-        const name = verification.full_name || tgPayload.first_name || 'Member';
+        const name = res.user?.full_name || res.user?.username || tgPayload.first_name || 'Member';
         onSuccess('member', name, 'tg-member-session');
       } catch (err: any) {
         setErrorMessage(err.message || 'Gagal verifikasi Telegram');
@@ -84,8 +84,28 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
       }
     };
 
+    // Receive postMessage from popup OAuth window if completed
+    const handleMessage = (event: MessageEvent) => {
+      try {
+        let data = event.data;
+        if (typeof data === 'string') {
+          try { data = JSON.parse(data); } catch { return; }
+        }
+        if (data && (data.event === 'auth_result' || data.tgAuthResult || data.id)) {
+          const payload = data.result || data.tgAuthResult || data;
+          if (payload && payload.hash) {
+            (window as any).onTelegramAuth?.(payload);
+          }
+        }
+      } catch {
+        // ignore cross-origin noise
+      }
+    };
+    window.addEventListener('message', handleMessage);
+
     return () => {
       delete (window as any).onTelegramAuth;
+      window.removeEventListener('message', handleMessage);
     };
   }, [onSuccess]);
 
@@ -179,10 +199,10 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
     }
   };
 
-  // 5. Telegram Widget
+  // 5. Telegram Widget (Popup)
   const handleTelegramLogin = () => {
     const redirectUrl = window.location.origin + '/member/login';
-    const authUrl = `https://oauth.telegram.org/auth?bot_id=8849114090&origin=${encodeURIComponent(redirectUrl)}`;
+    const authUrl = `https://oauth.telegram.org/auth?bot_id=8849114090&origin=${encodeURIComponent(redirectUrl)}&embed=1&request_access=write`;
     window.open(authUrl, 'telegram_member_auth', 'width=550,height=550,left=400,top=200');
   };
 
@@ -644,7 +664,7 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
                 </div>
               )}
 
-              {/* TAB CONTENT 3: TELEGRAM BOT */}
+              {/* TAB CONTENT 3: TELEGRAM BOT & WIDGET */}
               {activeTab === 'telegram' && (
                 <div className="space-y-4 py-2 text-center animate-fade-in">
                   <div className="p-4 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-xs text-cyan-200 text-left space-y-1">
@@ -653,19 +673,48 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
                       <span>Login Otomatis via Telegram Bot</span>
                     </div>
                     <p className="text-[11px] text-slate-300">
-                      Gunakan perintah <code>/start</code> atau <code>/login</code> di bot resmi <strong>@sandekalabot</strong> untuk mendapatkan tautan masuk instan ke akun Anda.
+                      Gunakan bot resmi <strong>@sandekalabot</strong> untuk mendapatkan link masuk instan ke akun Member Anda.
                     </p>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={handleTelegramLogin}
-                    className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-cyan-950/50 transition cursor-pointer"
-                  >
-                    <Send size={15} />
-                    <span>Otorisasi via Telegram Widget</span>
-                  </button>
-                  <p className="text-[10px] text-slate-500">Tersinkronisasi otomatis dengan profil bot Anda</p>
+                  {/* METODE 1: BUKA BOT TELEGRAM SECARA LANGSUNG (100% RELIABLE) */}
+                  <div className="space-y-2.5">
+                    <a
+                      href="https://t.me/sandekalabot?start=login"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 hover:from-cyan-500 hover:via-blue-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-cyan-950/50 transition cursor-pointer"
+                    >
+                      <Send size={16} />
+                      <span>Buka Bot @sandekalabot (Ketik /login)</span>
+                      <ExternalLink size={13} className="text-cyan-200" />
+                    </a>
+
+                    <div className="p-3.5 rounded-xl bg-black/30 border border-white/5 text-left text-[11px] text-slate-300 space-y-1.5">
+                      <div className="font-semibold text-cyan-300 flex items-center gap-1.5">
+                        <CheckCircle2 size={13} />
+                        <span>Cara Masuk Praktis:</span>
+                      </div>
+                      <ol className="list-decimal list-inside space-y-1 text-slate-400 pl-1">
+                        <li>Klik tombol <strong className="text-white">Buka Bot @sandekalabot</strong> di atas.</li>
+                        <li>Ketik perintah <code className="px-1.5 py-0.5 rounded bg-white/10 text-cyan-200 font-mono">/login</code> di bot.</li>
+                        <li>Bot akan mengirim tombol <strong className="text-white">🚀 Masuk ke Dashboard</strong> sekali klik.</li>
+                      </ol>
+                    </div>
+                  </div>
+
+                  {/* METODE 2: POPUP WIDGET */}
+                  <div className="pt-2 border-t border-white/5 space-y-2">
+                    <button
+                      type="button"
+                      onClick={handleTelegramLogin}
+                      className="w-full py-2.5 px-4 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-xs font-semibold border border-white/10 flex items-center justify-center gap-2 transition cursor-pointer"
+                    >
+                      <Send size={14} className="text-cyan-400" />
+                      <span>Otorisasi via Popup Telegram</span>
+                    </button>
+                    <p className="text-[10px] text-slate-500">Tersinkronisasi otomatis dengan profil akun Telegram Anda</p>
+                  </div>
                 </div>
               )}
             </div>

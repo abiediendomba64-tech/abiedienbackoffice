@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { buildCorsHeaders, handlePreflight } from '../_shared/cors.ts';
 
 declare const Deno: any;
 
@@ -102,42 +103,10 @@ const json = (x: unknown, status = 200) =>
     headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }
   });
 
-const ALLOWED_ORIGINS = [
-  'https://abiedienbackoffice.pages.dev',
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'http://127.0.0.1:5173',
-  'http://127.0.0.1:3000'
-];
-
-function getAllowedOrigin(req: Request): string {
-  const origin = req.headers.get('origin');
-  if (!origin) {
-    return 'https://abiedienbackoffice.pages.dev';
-  }
-  if (ALLOWED_ORIGINS.includes(origin)) {
-    return origin;
-  }
-  // Allow Cloudflare Pages preview deployments (*.abiedienbackoffice.pages.dev)
-  try {
-    const url = new URL(origin);
-    if (url.protocol === 'https:' && url.hostname.endsWith('.abiedienbackoffice.pages.dev')) {
-      return origin;
-    }
-  } catch {
-    // invalid URL format
-  }
-  return 'https://abiedienbackoffice.pages.dev';
-}
-
 const wrap = (r: Response, req: Request) => {
   const h = new Headers(r.headers);
-  const allowedOrigin = getAllowedOrigin(req);
-  h.set('access-control-allow-origin', allowedOrigin);
-  h.set('vary', 'Origin');
-  h.set('access-control-allow-credentials', 'true');
-  h.set('access-control-allow-headers', 'authorization, content-type, apikey, x-client-info');
-  h.set('access-control-allow-methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  const corsH = buildCorsHeaders(req);
+  for (const [k, v] of Object.entries(corsH)) h.set(k, v);
   return new Response(r.body, { status: r.status, headers: h });
 };
 
@@ -265,7 +234,7 @@ async function can(a: any, c: string) {
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
-    return wrap(new Response(null, { status: 204 }), req);
+    return handlePreflight(req);
   }
 
   try {

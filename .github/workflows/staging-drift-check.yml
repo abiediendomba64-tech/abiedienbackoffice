@@ -1,0 +1,89 @@
+# Drift check untuk gerbang review staging P0.5.
+#
+# Membandingkan schema remote terhadap migration lokal. `db diff --linked`
+# butuh Docker (shadow database), jadi dijalankan di GitHub Actions runner
+# (bukan lokal). Job FAIL bila ditemukan drift (isi migration lokal tidak sama
+# dengan schema remote yang sudah tercatat) — memberi signal bahwa migration
+# yang baru diubah belum tercermin di remote.
+#
+# Trigger: manual via Actions > Staging Drift Check > Run workflow.
+# Guard: verify project ref cocok dengan staging sebelum menjalankan diff.
+name: Staging Drift Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_ref:
+        description: "Supabase project ref untuk dibandingkan (default: SUPABASE_PROJECT_ID)"
+        required: false
+        default: ""
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve and verify target project ref
+        id: ref
+        run: |
+          REF="${{ github.event.inputs.project_ref }}"
+          if [ -z "$REF" ]; then
+            REF="${{ secrets.SUPABASE_PROJECT_ID || vars.SUPABASE_PROJECT_ID }}"
+          fi
+          if [ -z "$REF" ]; then
+            echo "::error::No project ref given and SUPABASE_PROJECT_ID secret/var not set"
+            exit 1
+          fi
+          EXP="${{ vars.SUPABASE_STAGING_REF }}"
+          if [ -n "$EXP" ] && [ "$REF" != "$EXP" ]; then
+            echo "::error::Ref $REF != expected staging ref SUPABASE_STAGING_REF=$EXP"
+            exit 1
+          fi
+          echo "Target staging project ref: $REF"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link project
+        run: supabase link --project-ref "${{ steps.ref.outputs.ref }}"
+
+      - name: Migration state
+        run: supabase migration list --linked
+
+      - name: Run drift check
+        id: drift
+        run: |
+          # stdout berisi diff SQL asli; stderr berisi pesan status CLI.
+          output="$(supabase db diff --linked 2>/dev/null)"
+          mkdir -p "$RUNNER_TEMP"
+          echo "$output" > "$RUNNER_TEMP/drift.diff"
+          echo "### Staging drift check" >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$output" ]; then
+            echo ":white_check_mark: **No drift** — remote schema matches local migrations" >> "$GITHUB_STEP_SUMMARY"
+            echo "No drift detected. Remote schema matches local migrations."
+          else
+            echo ":x: **Drift detected** — review diff artifact / summary log" >> "$GITHUB_STEP_SUMMARY"
+            echo '```sql' >> "$GITHUB_STEP_SUMMARY"
+            echo "$output" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Schema drift detected between local migrations and remote"
+            echo "$output"
+            exit 1
+          fi
+
+      - name: Upload drift artifact (for review)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-drift-diff
+          path: "${{ runner.temp }}/drift.diff"
+          if-no-files-found: ignore
+          overwrite: true
