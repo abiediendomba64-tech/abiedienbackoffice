@@ -93,17 +93,14 @@ import {
   DEFAULT_ADMIN_IDS,
   DOMAIN_PRICES,
   DomainOrderRequest,
-  getDomainOrdersList,
   fetchDomainOrders,
-  saveDomainOrder,
+  createDomainOrderTicket,
+  advanceDomainOrderTicket,
   MemberDomainInventory,
-  getMemberInventoryList,
   fetchMemberInventories,
-  saveMemberInventoryItem,
   TechnicalCase,
-  getTechnicalCasesList,
   fetchTechnicalCases,
-  saveTechnicalCase,
+  transitionIncidentStatus,
   DomainCredential
 } from './lib/api';
 import { LoginDetectionRecord } from './types';
@@ -1050,6 +1047,7 @@ export default function App() {
       <MemberPortalView 
         name={currentUserName}
         telegramId={currentUserTelegramId}
+        canonicalUserId={currentCanonicalUserId}
         tickets={tickets.filter(t => String(t.user_id) === String(currentCanonicalUserId))}
         payments={payments.filter(p => String(p.user_id) === String(currentCanonicalUserId))}
         domains={domains.filter(d => d.user?.full_name === currentUserName)}
@@ -4347,20 +4345,8 @@ function TechnicalRescueHub({ cases: initialCases, onUpdateCases, onToast }: {
       setIndexingRunning(false);
       onToast(`⚡ Push Indexing untuk ${targetDomain} sukses dieksekusi!`, 'success');
       
-      const newCase: TechnicalCase = {
-        id: `TECH-${Math.floor(100 + Math.random() * 900)}`,
-        caseType: 'INDEX_LOST',
-        title: `Google Indexing Blast: ${targetDomain}`,
-        targetDomain,
-        originServer: 'Google Search Console API',
-        status: 'resolved',
-        diagnosticResult: 'Noindex tag build lama berhasil dihapus & XML sitemap di-regenerasi.',
-        actionTaken: '18 URLs dipush ke Google & Bing IndexNow.',
-        timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19),
-      };
-      saveTechnicalCase(newCase)
-        .then(() => onUpdateCases(getTechnicalCasesList()))
-        .catch((e: any) => onToast(`Gagal menyimpan kasus ke server: ${e.message}`, 'error'));
+      // NOTE: kasus insiden TIDAK lagi dibuat dari simulasi UI. Pembuatan
+      // insiden canonical hanya lewat create_incident_ticket (migration 015).
     }, 1800);
   };
 
@@ -4827,13 +4813,17 @@ server {
                 <button
                   onClick={() => {
                     const newStatus = cs.status === 'resolved' ? 'fixing' : 'resolved';
-                    const updated = initialCases.map(c => c.id === cs.id ? { ...c, status: newStatus as any } : c);
-                    saveTechnicalCase({ ...cs, status: newStatus as any })
+                    if (cs.incidentId == null) {
+                      onToast(`Kasus ${cs.id} belum memiliki insiden canonical — tidak bisa diubah.`, 'error');
+                      return;
+                    }
+                    transitionIncidentStatus(cs.incidentId, newStatus)
                       .then(() => {
+                        const updated = initialCases.map(c => c.id === cs.id ? { ...c, status: newStatus as any } : c);
                         onUpdateCases(updated);
-                        onToast(`Status kasus ${cs.id} diperbarui menjadi ${newStatus}.`, 'success');
+                        onToast(`Status insiden ${cs.id} → ${newStatus}.`, 'success');
                       })
-                      .catch((e: any) => onToast(`Gagal menyimpan status kasus: ${e.message}`, 'error'));
+                      .catch((e: any) => onToast(`Gagal mengubah status insiden: ${e.message}`, 'error'));
                   }}
                   className="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-bold transition cursor-pointer"
                 >
@@ -4934,12 +4924,12 @@ function DomainOrdersView({ orders: initialOrders, onUpdateOrders, onToast }: {
         whoisStatus: res.status === 'registered' ? 'registered' : 'available',
         notes: `WHOIS Google DoH: ${res.message}. NS: ${res.nameservers.join(', ') || 'None'}`
       };
-      saveDomainOrder(updatedOrder).then(() => {
-        const updatedList = ordersList.map(o => o.id === order.id ? updatedOrder : o);
-        setOrdersList(updatedList);
-        onUpdateOrders(updatedList);
-        onToast(`Cek WHOIS ${order.domainName}: ${res.status.toUpperCase()}`, 'success');
-      }).catch((e: any) => onToast(`Gagal menyimpan hasil WHOIS ke server: ${e.message}`, 'error'));
+      // WHOIS result is display-only (from a real DoH lookup); there is no
+      // canonical column to persist it into — no fake server write.
+      const updatedList = ordersList.map(o => o.id === order.id ? updatedOrder : o);
+      setOrdersList(updatedList);
+      onUpdateOrders(updatedList);
+      onToast(`Cek WHOIS ${order.domainName}: ${res.status.toUpperCase()} (lokal, tidak dipersist)`, 'success');
     } catch (e: any) {
       onToast(`Gagal cek WHOIS: ${e.message}`, 'error');
     } finally {
@@ -4948,23 +4938,31 @@ function DomainOrdersView({ orders: initialOrders, onUpdateOrders, onToast }: {
   };
 
   const handleAdvanceStatus = (order: DomainOrderRequest, nextStatus: DomainOrderRequest['status']) => {
-    const updatedOrder: DomainOrderRequest = {
-      ...order,
-      status: nextStatus,
-      updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-    };
-    if (nextStatus === 'dns_cloudflare_setup' || nextStatus === 'active') {
-      updatedOrder.nameservers = ['eva.ns.cloudflare.com', 'walt.ns.cloudflare.com'];
-      updatedOrder.cloudflareDnsProxy = true;
+    // Canonical FSM command only. 'active' = ticket resolved, 'rejected' =
+    // ticket rejected. Other visual statuses have no canonical command yet.
+    const action: 'RESOLVE' | 'REJECT' | null =
+      nextStatus === 'active' ? 'RESOLVE' : nextStatus === 'rejected' ? 'REJECT' : null;
+    if (!action) {
+      onToast(`Perubahan status ke "${nextStatus}" belum memiliki command canonical.`, 'error');
+      return;
     }
-    saveDomainOrder(updatedOrder)
+    if (order.ticketId == null) {
+      onToast('Order ini tidak memiliki tiket canonical — tidak bisa diubah.', 'error');
+      return;
+    }
+    advanceDomainOrderTicket(order.ticketId, action, `Status order diubah ke ${nextStatus} via backoffice`)
       .then(() => {
+        const updatedOrder: DomainOrderRequest = {
+          ...order,
+          status: nextStatus,
+          updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
+        };
         const updatedList = ordersList.map(o => o.id === order.id ? updatedOrder : o);
         setOrdersList(updatedList);
         onUpdateOrders(updatedList);
         onToast(`Status order ${order.domainName} diperbarui ke ${nextStatus}.`, 'success');
       })
-      .catch((e: any) => onToast(`Gagal menyimpan status order ke server: ${e.message}`, 'error'));
+      .catch((e: any) => onToast(`Gagal mengubah status order di server: ${e.message}`, 'error'));
   };
 
   const handleCreateNewOrder = async (e: React.FormEvent) => {
@@ -5271,50 +5269,9 @@ function MemberInventoryView({ inventories: initialInventories, onUpdateInventor
 
   const handleSaveRegistration = (e: React.FormEvent) => {
     e.preventDefault();
-    const dList = domainsText.split(/[\n,]+/).map(d => d.trim()).filter(Boolean);
-    const newItem: MemberDomainInventory = {
-      id: `MEM-INV-${Math.floor(104 + Math.random() * 890)}`,
-      telegramId: telegramId || '0',
-      fullName,
-      username: username.startsWith('@') ? username : `@${username}`,
-      phoneWhatsapp: phone,
-      bankName,
-      bankAccount,
-      domainCount: dList.length || Number(domainCount) || 1,
-      domainList: dList,
-      domainCredentials: credentialsText
-        ? credentialsText
-            .split(/[,\n]+/)
-            .map(line => {
-              const parts = line.split('|').map(p => p.trim());
-              if (parts.length >= 3 && parts[0]) {
-                return { domain: parts[0], user: parts[1], pass: parts[2] };
-              }
-              return null;
-            })
-            .filter((c): c is DomainCredential => c !== null && c.domain.length > 0 && c.user.length > 0 && c.pass.length > 0)
-        : [],
-      status: 'active',
-      registeredAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-      verifiedBy: 'Super Admin',
-    };
-
-    saveMemberInventoryItem(newItem)
-      .then(() => {
-        const updated = [newItem, ...inventoriesList];
-        setInventoriesList(updated);
-        onUpdateInventories(updated);
-        setNewRegModal(false);
-        setFullName('');
-        setTelegramId('');
-        setUsername('');
-        setPhone('');
-        setBankAccount('');
-        setDomainsText('');
-        setCredentialsText('');
-        onToast(`Data pendaftaran ulang member ${fullName} berhasil disimpan.`, 'success');
-      })
-      .catch((e: any) => onToast(`Gagal menyimpan inventaris ke server: ${e.message}`, 'error'));
+    // Canonical: tidak ada jalur tulis inventaris dari UI. domain_assignments
+    // hanya dibuat lewat approval pipeline domain. Jangan berpura-pura sukses.
+    onToast('Penyimpanan inventaris via UI belum tersedia secara canonical (menunggu command backend).', 'error');
   };
 
   const handleExportCSV = () => {
@@ -8042,7 +7999,7 @@ function MemberRequestTicketPage({ category, pageTitle, pageDesc, pageIcon, acce
   );
 }
 
-function MemberPortalView({ name, telegramId, tickets: initialTickets, payments, domains: initialDomains, onLogout, onRefresh, showToast }: any) {
+function MemberPortalView({ name, telegramId, canonicalUserId, tickets: initialTickets, payments, domains: initialDomains, onLogout, onRefresh, showToast }: any) {
   // ============ ROUTED MEMBER PAGES (hash-based, deep-linkable) ============
   // Each member page has its own URL so it can be bookmarked / shared:
   //   #/portal            -> overview (status domain)
@@ -8146,6 +8103,7 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
   const [orderWhoisChecking, setOrderWhoisChecking] = useState(false);
   const [orderWhoisResult, setOrderWhoisResult] = useState<WhoisCheckResult | null>(null);
   const [orderNotes, setOrderNotes] = useState('');
+  const [orderSubmitting, setOrderSubmitting] = useState(false);
 
   // Claim Gaji / Payroll State
   const [claimAmount, setClaimAmount] = useState('');
@@ -8158,29 +8116,24 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
   const [claimSubmitting, setClaimSubmitting] = useState(false);
 
   // My Inventory & Re-Registration State
-  const [myInventory, setMyInventory] = useState<MemberDomainInventory>(() => {
-    const list = getMemberInventoryList();
-    const found = list.find(m => String(m.telegramId) === String(telegramId) || m.fullName === name);
-    if (found) return found;
-    return {
-      id: `MEM-INV-${Math.floor(100 + Math.random() * 900)}`,
-      telegramId: String(telegramId || '0'),
-      fullName: name || 'Member Operator',
-      username: `@${(name || 'member').toLowerCase().replace(/\s+/g, '_')}`,
-      phoneWhatsapp: '081234567890',
-      bankName: 'BCA',
-      bankAccount: '8820192831',
-      domainCount: 2,
-      domainList: ['kopimax.com', 'zeusgacor77.com'],
-      domainCredentials: [
-        { domain: 'kopimax.com', user: 'member_ops', pass: '••••••••' },
-        { domain: 'zeusgacor77.com', user: 'member_ops', pass: '••••••••' }
-      ],
-      status: 'active',
-      registeredAt: new Date().toISOString().substring(0, 10),
-      verifiedBy: 'System Auto-Root',
-    };
-  });
+  // Canonical: inventaris member berasal dari domain_assignments (server).
+  // Tidak ada default dummy (kopimax.com dsb.) — kosong = memang belum ada
+  // assignment canonical. Data bank/kredensial plaintext tidak lagi
+  // dikumpulkan di sini (credentials canonical = website_credentials_ref).
+  const [myInventory, setMyInventory] = useState<MemberDomainInventory>(() => ({
+    id: `INV-local-${telegramId || '0'}`,
+    telegramId: String(telegramId || '0'),
+    fullName: name || 'Member Operator',
+    username: `@${(name || 'member').toLowerCase().replace(/\s+/g, '_')}`,
+    phoneWhatsapp: '',
+    bankName: '',
+    bankAccount: '',
+    domainCount: 0,
+    domainList: [],
+    domainCredentials: [],
+    status: 'pending_verification',
+    registeredAt: new Date().toISOString().substring(0, 10),
+  }));
   const [invDomainsText, setInvDomainsText] = useState(myInventory.domainList.join('\n'));
   const [invCredentialsText, setInvCredentialsText] = useState(
     myInventory.domainCredentials.map(c => `${c.domain} | ${c.user} | ${c.pass}`).join('\n')
@@ -8209,53 +8162,47 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
   };
 
   // Handle Order Submit (.com Rp 170.000)
-  const handleSubmitDomainOrder = (e: React.FormEvent) => {
+  // Canonical: membuat tiket domain_request via POST /tickets
+  // (capability ticket.create). Bukan localStorage, bukan DORD acak.
+  const handleSubmitDomainOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!orderDomainInput.trim()) return;
     const fullDomain = orderDomainInput.includes('.') ? orderDomainInput.trim() : `${orderDomainInput.trim()}${orderDomainExt}`;
     const price = DOMAIN_PRICES[orderDomainExt as keyof typeof DOMAIN_PRICES] || 170000;
 
-    const newOrder: DomainOrderRequest = {
-      id: `DORD-${Math.floor(100 + Math.random() * 900)}`,
-      ticketNumber: `REQ-DOM-${Math.floor(100 + Math.random() * 900)}`,
-      telegramId: String(telegramId || '0'),
-      requesterName: name,
-      domainName: fullDomain,
-      domainExt: orderDomainExt,
-      priceIdr: price,
-      status: 'waiting_payment',
-      whoisStatus: orderWhoisResult?.status === 'registered' ? 'registered' : 'available',
-      nameservers: ['eva.ns.cloudflare.com', 'walt.ns.cloudflare.com'],
-      cloudflareDnsProxy: true,
-      notes: orderNotes || 'Order domain .com Rp 170.000 dari Member Portal. Menunggu verifikasi transfer.',
-      createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-      updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-    };
+    setOrderSubmitting(true);
+    try {
+      const res = await createDomainOrderTicket({
+        domain: fullDomain,
+        priceIdr: price,
+        notes: orderNotes || 'Order domain dari Member Portal. Menunggu verifikasi transfer.',
+      });
+      if (!res.success) throw new Error(res.error || 'Order gagal dibuat.');
 
-    saveDomainOrder(newOrder)
-      .catch((e: any) => showToast(`Gagal menyimpan order ke server: ${e.message}`, 'error'));
+      setMemberTickets([
+        {
+          id: Date.now(),
+          title: `Order Domain: ${fullDomain} (Rp ${price.toLocaleString('id-ID')})`,
+          category: 'domain_request',
+          priority: 'high',
+          status: 'pending',
+          created_at: new Date().toISOString(),
+          user_name: name,
+          user_id: canonicalUserId,
+          notes: `Order domain ${fullDomain} seharga Rp ${price.toLocaleString('id-ID')}. Tiket: ${res.ticketNumber || '-'}`,
+        },
+        ...memberTickets
+      ]);
 
-    // Also add to private tickets queue
-    const ticketId = Math.floor(700 + Math.random() * 299);
-    setMemberTickets([
-      {
-        id: ticketId,
-        title: `Order Domain .com: ${fullDomain} (Rp ${price.toLocaleString('id-ID')})`,
-        category: 'domain_request',
-        priority: 'high',
-        status: 'pending',
-        created_at: new Date().toISOString(),
-        user_name: name,
-        user_id: telegramId,
-        notes: `Order domain ${fullDomain} seharga Rp ${price.toLocaleString('id-ID')}. Bukti transfer sedang disiapkan.`
-      },
-      ...memberTickets
-    ]);
-
-    setOrderDomainInput('');
-    setOrderNotes('');
-    setOrderWhoisResult(null);
-    showToast(`Order domain ${fullDomain} berhasil dikirim! Silakan transfer Rp ${price.toLocaleString('id-ID')}.`, 'success');
+      setOrderDomainInput('');
+      setOrderNotes('');
+      setOrderWhoisResult(null);
+      showToast(`Order domain ${fullDomain} tercatat sebagai tiket ${res.ticketNumber || ''}. Silakan transfer Rp ${price.toLocaleString('id-ID')}.`, 'success');
+    } catch (err: any) {
+      showToast(`Gagal membuat order: ${err.message}`, 'error');
+    } finally {
+      setOrderSubmitting(false);
+    }
   };
 
   // Handle File Upload Attachment (Max 5MB)
@@ -8342,10 +8289,10 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
       domainCredentials: credList.length ? credList : myInventory.domainCredentials,
       registeredAt: new Date().toISOString().substring(0, 10),
     };
+    // Tampilan lokal saja — TIDAK diklaim tersimpan di server. Jalur tulis
+    // canonical untuk inventaris belum ada (hanya approval pipeline domain).
     setMyInventory(updated);
-    saveMemberInventoryItem(updated)
-      .then(() => showToast(`Data pendaftaran ulang & inventaris ${dList.length} domain berhasil disimpan!`, 'success'))
-      .catch((e: any) => showToast(`Gagal menyimpan inventaris ke server: ${e.message}`, 'error'));
+    showToast('Data diperbarui secara lokal. Sinkronisasi server inventaris belum tersedia secara canonical.', 'error');
   };
 
   const handleCreateTicketSubmit = (e: React.FormEvent) => {

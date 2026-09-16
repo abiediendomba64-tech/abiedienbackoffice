@@ -642,6 +642,7 @@ export const DOMAIN_PRICES: Record<string, number> = {
 
 export interface DomainOrderRequest {
   id: string;
+  ticketId?: number;
   ticketNumber: string;
   telegramId: string;
   requesterName: string;
@@ -660,62 +661,79 @@ export interface DomainOrderRequest {
 
 
 
-// Canonical remote store for operational lists (migration 032).
-// localStorage is only a read cache; Supabase tables are the authority.
-type ListRow = { id: string; status: string; data: unknown };
+// Canonical loaders — migration 011 (domain pipeline) + 015 (incidents).
+// No localStorage authority, no mock fallback: empty DB = empty UI.
 
-async function fetchList<T>(table: string, cacheKey: string, fallback: T[]): Promise<T[]> {
-  if (!isSupabaseConfigured) return fallback;
-  try {
-    const { data, error } = await supabase.from(table).select('id,status,data').order('updated_at', { ascending: false });
-    if (error) throw error;
-    const items = (data || []).map((r: ListRow) => ({ ...(r.data as T), id: r.id, status: (r.data as T & { status?: string }).status ?? r.status }));
-    try { localStorage.setItem(cacheKey, JSON.stringify(items)); } catch (_) {}
-    return items;
-  } catch (e: any) {
-    console.warn(`[store] ${table} fetch failed, using cache:`, e?.message);
-    try {
-      const raw = localStorage.getItem(cacheKey);
-      if (raw) return JSON.parse(raw);
-    } catch (_) {}
-    return fallback;
+async function fetchBackoffice<T>(path: string, init?: RequestInit): Promise<T> {
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) throw new Error('Supabase tidak terkonfigurasi.');
+  const session = await supabase.auth.getSession();
+  const token = session.data.session?.access_token;
+  if (!token) throw new Error('Sesi tidak ditemukan. Login terlebih dahulu.');
+  const res = await fetch(`${supabaseUrl}/functions/v1/backoffice-api-v3${path}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', 'apikey': anonKey, 'Authorization': `Bearer ${token}`, ...(init?.headers || {}) },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || body.error || `API ${path} gagal: ${res.status}`);
+  }
+  return res.json();
+}
+
+function mapTicketStatusToOrder(status: string): DomainOrderRequest['status'] {
+  switch (status) {
+    case 'resolved': return 'active';
+    case 'rejected': case 'cancelled': return 'rejected';
+    case 'assigned': return 'whois_verified';
+    case 'in_progress': case 'waiting_member': return 'registrar_pending';
+    default: return 'waiting_payment';
   }
 }
 
-async function saveListItem<T extends { id: string; status?: string }>(table: string, cacheKey: string, item: T): Promise<void> {
-  if (!isSupabaseConfigured) throw new Error('Supabase tidak terkonfigurasi — data tidak disimpan ke server.');
-  const { error } = await supabase
-    .from(table)
-    .upsert({ id: item.id, status: (item.status as string) || 'active', data: item, updated_at: new Date().toISOString() }, { onConflict: 'id' });
-  if (error) throw new Error(`Gagal menyimpan ke server (${table}): ${error.message}`);
-  const current = readCache<T>(cacheKey);
-  const idx = current.findIndex((x: T & { id: string }) => x.id === item.id);
-  if (idx >= 0) current[idx] = item; else current.unshift(item);
-  try { localStorage.setItem(cacheKey, JSON.stringify(current)); } catch (_) {}
-}
-
-function readCache<T>(cacheKey: string): T[] {
-  try {
-    const raw = localStorage.getItem(cacheKey);
-    if (raw) return JSON.parse(raw);
-  } catch (_) {}
-  return [];
-}
-
-// ==========================================
-// DOMAIN ORDERS (server-backed)
-// ==========================================
-
-export function getDomainOrdersList(): DomainOrderRequest[] {
-  return readCache<DomainOrderRequest>('domain_order_requests');
-}
-
 export async function fetchDomainOrders(): Promise<DomainOrderRequest[]> {
-  return fetchList<DomainOrderRequest>('domain_order_requests', 'domain_order_requests', []);
+  const rows = await fetchBackoffice<any[]>('/domain-orders');
+  return (rows || []).map((t: any) => {
+    const cd = t.collected_data || {};
+    const domain: string = cd.requested_domain || cd.domain_name || '';
+    return {
+      id: t.ticket_number ? `DORD-${t.ticket_number}` : `DORD-${t.id}`,
+      ticketId: t.id,
+      ticketNumber: t.ticket_number || String(t.id),
+      telegramId: cd.telegram_user_id != null ? String(cd.telegram_user_id) : '',
+      requesterName: cd.requester_name || 'Member',
+      domainName: domain || t.title || '',
+      domainExt: domain.includes('.') ? `.${domain.split('.').pop()}` : '.com',
+      priceIdr: Number(cd.price_idr) || 0,
+      status: mapTicketStatusToOrder(t.status || 'pending'),
+      whoisStatus: cd.whois_status === 'registered' ? 'registered' : 'available',
+      nameservers: Array.isArray(cd.nameservers) ? cd.nameservers : [],
+      cloudflareDnsProxy: Boolean(cd.cloudflare_dns_proxy),
+      notes: t.description || '',
+      createdAt: t.created_at || '',
+      updatedAt: t.updated_at || '',
+    } as DomainOrderRequest;
+  });
 }
 
-export async function saveDomainOrder(order: DomainOrderRequest): Promise<void> {
-  await saveListItem('domain_order_requests', 'domain_order_requests', order);
+// Canonical order command: create a REAL domain-request ticket via the
+// member ticket pipeline (POST /tickets, capability ticket.create).
+export async function createDomainOrderTicket(params: { domain: string; priceIdr?: number; notes?: string }): Promise<{ success: boolean; ticketNumber?: string; error?: string }> {
+  const description = `Order domain ${params.domain}${params.priceIdr ? ` — Rp ${params.priceIdr.toLocaleString('id-ID')}` : ''}.${params.notes ? ' Catatan: ' + params.notes : ''}`;
+  const res = await fetchBackoffice<any>('/tickets', {
+    method: 'POST',
+    body: JSON.stringify({ category: 'domain_request', priority: 'high', title: `Order Domain: ${params.domain}`, description }),
+  });
+  return { success: Boolean(res?.success), ticketNumber: res?.ticket?.ticket_number, error: res?.error };
+}
+
+// Canonical FSM command for a domain-request ticket (admin only).
+export async function advanceDomainOrderTicket(ticketId: number, action: 'RESOLVE' | 'REJECT', reason: string): Promise<void> {
+  await fetchBackoffice('/admin/actions/execute', {
+    method: 'POST',
+    body: JSON.stringify({ action, ticket_id: ticketId, reason }),
+  });
 }
 
 // ==========================================
@@ -746,16 +764,44 @@ export interface MemberDomainInventory {
 
 
 
-export function getMemberInventoryList(): MemberDomainInventory[] {
-  return readCache<MemberDomainInventory>('member_domain_inventories');
-}
-
+// Canonical member inventory read-model: domain_assignments ← domain_inventory + users.
+// Banking data & plaintext credentials are NOT part of this read model
+// (credentials live in website_credentials_ref.secret_ref, server-only).
 export async function fetchMemberInventories(): Promise<MemberDomainInventory[]> {
-  return fetchList<MemberDomainInventory>('member_domain_inventories', 'member_domain_inventories', []);
-}
-
-export async function saveMemberInventoryItem(item: MemberDomainInventory): Promise<void> {
-  await saveListItem('member_domain_inventories', 'member_domain_inventories', item);
+  const { data, error } = await supabase
+    .from('domain_assignments')
+    .select('id,user_id,status,notes,assigned_at,users(full_name,telegram_id),domain_inventory(domain_name,registrar,dns_status)')
+    .order('assigned_at', { ascending: false })
+    .limit(200);
+  if (error) throw new Error(`Gagal memuat inventaris: ${error.message}`);
+  const byUser = new Map<number, MemberDomainInventory>();
+  for (const row of (data || []) as any[]) {
+    const uid = row.user_id;
+    const userRel = Array.isArray(row.users) ? row.users[0] : row.users;
+    const invRel = Array.isArray(row.domain_inventory) ? row.domain_inventory[0] : row.domain_inventory;
+    if (!byUser.has(uid)) {
+      byUser.set(uid, {
+        id: `INV-${uid}`,
+        telegramId: userRel?.telegram_id != null ? String(userRel.telegram_id) : String(uid),
+        fullName: userRel?.full_name || `User #${uid}`,
+        username: '',
+        phoneWhatsapp: '',
+        bankName: '',
+        bankAccount: '',
+        domainCount: 0,
+        domainList: [],
+        domainCredentials: [],
+        status: row.status === 'active' ? 'active' : 'pending_verification',
+        registeredAt: row.assigned_at || '',
+        verifiedBy: row.notes || undefined,
+      });
+    }
+    const inv = byUser.get(uid)!;
+    if (invRel?.domain_name) inv.domainList.push(invRel.domain_name);
+    inv.domainCount = inv.domainList.length;
+    if (row.status !== 'active') inv.status = 'pending_verification';
+  }
+  return Array.from(byUser.values());
 }
 
 // ==========================================
@@ -764,6 +810,7 @@ export async function saveMemberInventoryItem(item: MemberDomainInventory): Prom
 
 export interface TechnicalCase {
   id: string;
+  incidentId?: number;
   caseType: 'INDEX_LOST' | 'DNS_FAILOVER' | 'SERVER_MIGRATION' | 'WAF_ATTACK';
   title: string;
   targetDomain: string;
@@ -776,14 +823,41 @@ export interface TechnicalCase {
 
 
 
-export function getTechnicalCasesList(): TechnicalCase[] {
-  return readCache<TechnicalCase>('technical_rescue_cases');
-}
-
+// Canonical incident read-model (migration 015). caseType is metadata-driven;
+// unmapped values fall back to a neutral bucket — never invented data.
 export async function fetchTechnicalCases(): Promise<TechnicalCase[]> {
-  return fetchList<TechnicalCase>('technical_rescue_cases', 'technical_rescue_cases', []);
+  const { data, error } = await supabase
+    .from('incidents')
+    .select('id,incident_code,title,severity,status,root_cause,resolution_notes,started_at,metadata')
+    .order('started_at', { ascending: false })
+    .limit(100);
+  if (error) throw new Error(`Gagal memuat insiden: ${error.message}`);
+  const CASE_TYPES = ['INDEX_LOST', 'DNS_FAILOVER', 'SERVER_MIGRATION', 'WAF_ATTACK'] as const;
+  return (data || []).map((r: any) => {
+    const md = r.metadata || {};
+    const incStatus = r.status === 'resolved' || r.status === 'closed'
+      ? 'resolved'
+      : r.status === 'fixing' ? 'fixing' : 'investigating';
+    return {
+      id: r.incident_code || `INC-${r.id}`,
+      incidentId: r.id,
+      caseType: CASE_TYPES.includes(md.case_type) ? md.case_type : 'SERVER_MIGRATION',
+      title: r.title,
+      targetDomain: md.target_domain || '',
+      originServer: md.origin_server || '',
+      status: incStatus,
+      diagnosticResult: r.root_cause || '',
+      actionTaken: r.resolution_notes || '',
+      timestamp: r.started_at || '',
+    } as TechnicalCase;
+  });
 }
 
-export async function saveTechnicalCase(item: TechnicalCase): Promise<void> {
-  await saveListItem('technical_rescue_cases', 'technical_rescue_cases', item);
+// Canonical incident FSM command (RPC from migration 015, capability-gated).
+export async function transitionIncidentStatus(incidentId: number, newStatus: 'investigating' | 'fixing' | 'resolved'): Promise<void> {
+  const { error } = await supabase.rpc('transition_incident_status', {
+    p_incident_id: incidentId,
+    p_new_status: newStatus,
+  });
+  if (error) throw new Error(`Gagal mengubah status insiden: ${error.message}`);
 }
