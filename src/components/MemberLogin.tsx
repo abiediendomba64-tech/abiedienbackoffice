@@ -259,6 +259,14 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
         telegramUsername: regTelegram
       });
 
+      if (res.pending) {
+        setInfoMessage(res.message || 'Pendaftaran diterima. Menunggu persetujuan admin.');
+        setEmail(regEmail);
+        setPassword('');
+        setIsRegisterMode(false);
+        return;
+      }
+
       if (!res.success) {
         setErrorMessage(res.error || 'Pendaftaran gagal. Periksa kembali data Anda.');
         setLoading(false);

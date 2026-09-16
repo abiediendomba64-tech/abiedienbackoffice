@@ -352,7 +352,7 @@ export async function registerMember(params: {
   fullName: string;
   phone?: string;
   telegramUsername?: string;
-}): Promise<{ success: boolean; user?: any; error?: string }> {
+}): Promise<{ success: boolean; pending?: boolean; message?: string; user?: any; error?: string }> {
   try {
     const { email, password, fullName, phone, telegramUsername } = params;
     
@@ -373,28 +373,55 @@ export async function registerMember(params: {
     if (authError) return { success: false, error: authError.message };
     if (!authData.user) return { success: false, error: 'Gagal membuat akun member' };
 
-    // 2. public.users row is REQUIRED. Canonical schema (live):
-    //    telegram_id BIGINT UNIQUE NOT NULL, phone_encrypted BYTEA — there is
-    //    NO phone_number column. The browser cannot mint a telegram_id, so the
-    //    row is created by an admin/telegram onboarding path; the browser can
-    //    only CLAIM (link) the pre-provisioned row matching the confirmed
-    //    email via the link_identity() RPC (Security Definer, one-to-one
-    //    guarded). Any failure here is a hard registration failure — no
-    //    silent false-success orphaning auth.users.
+    // Two DISTINCT contracts after Supabase Auth signup:
+    //
+    // 1. CLAIM (existing member): a pre-provisioned public.users row matching
+    //    the confirmed email exists -> link_identity() binds them one-to-one.
+    // 2. NEW APPLICANT: no matching row -> an onboarding request with status
+    //    PENDING_REVIEW is created for admin review. The caller is signed out;
+    //    they become a member only after an admin APPROVES and provisions the
+    //    canonical public.users row. Auth identity ≠ business membership.
     const { data: link, error: linkError } = await supabase.rpc('link_identity');
-    if (linkError || !link?.linked) {
-      // Roll the Auth account back so no orphan auth user survives a failed claim.
+
+    if (link?.linked) {
+      return { success: true, user: authData.user, pending: false };
+    }
+
+    const reason = linkError?.message || link?.reason || 'unknown';
+    const isNewApplicant = reason === 'no_matching_public_user';
+
+    if (isNewApplicant) {
+      const { error: obError } = await supabase
+        .from('member_onboarding_requests')
+        .insert({
+          auth_user_id: authData.user.id,
+          email: email.trim().toLowerCase(),
+          full_name: fullName.trim(),
+          phone: phone?.trim() || null,
+          telegram_username: telegramUsername?.trim() || null,
+        });
+      if (obError) {
+        await supabase.auth.signOut();
+        return { success: false, error: 'Gagal membuat permintaan onboarding: ' + obError.message };
+      }
       await supabase.auth.signOut();
-      const reason = linkError?.message || link?.reason || 'unknown';
       return {
-        success: false,
-        error:
-          'Pendaftaran tercatat di Supabase Auth, tetapi gagal dikaitkan ke akun member ' +
-          `(${reason}). Gunakan email yang sudah didaftarkan admin, atau hubungi admin.`,
+        success: true,
+        pending: true,
+        user: authData.user,
+        message: 'Pendaftaran diterima dan menunggu persetujuan admin (PENDING_REVIEW). Anda akan diberi tahu setelah akun diaktifkan.',
       };
     }
 
-    return { success: true, user: authData.user };
+    // Any other link failure is a hard failure — no orphan auth user, no
+    // silent false-success.
+    await supabase.auth.signOut();
+    return {
+      success: false,
+      error:
+        'Pendaftaran tercatat di Supabase Auth, tetapi gagal dikaitkan ke akun member ' +
+        `(${reason}). Gunakan email yang sudah didaftarkan admin, atau hubungi admin.`,
+    };
   } catch (e: any) {
     return { success: false, error: e.message };
   }

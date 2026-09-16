@@ -437,6 +437,12 @@ export default function App() {
   const [currentUserRole, setCurrentUserRole] = useState<UserRole>(() => (localStorage.getItem('user_role') as UserRole) || '');
   const [currentUserName, setCurrentUserName] = useState<string>(() => localStorage.getItem('user_name') || 'Abied Iendomba');
   const [currentUserTelegramId, setCurrentUserTelegramId] = useState<string>(() => localStorage.getItem('user_tg_id') || '7862805424');
+  // Canonical business identity: public.users.id resolved via verify_member_access().
+  // NEVER use telegram_id or auth uid where tickets.user_id/payments.user_id are expected.
+  const [currentCanonicalUserId, setCurrentCanonicalUserId] = useState<number | null>(() => {
+    const raw = localStorage.getItem('user_canonical_id');
+    return raw ? Number(raw) : null;
+  });
   const [domainOrders, setDomainOrders] = useState<DomainOrderRequest[]>(() => getDomainOrdersList());
   const [memberInventories, setMemberInventories] = useState<MemberDomainInventory[]>(() => getMemberInventoryList());
   const [technicalCases, setTechnicalCases] = useState<TechnicalCase[]>(() => getTechnicalCasesList());
@@ -648,14 +654,27 @@ export default function App() {
             showToast(adminCheck.reason || 'Akses ditolak: Akun ini bukan Super Admin terdaftar.', 'error');
           }
         } else {
+          // Member path: Supabase Auth identity ≠ business membership.
+          // verify_member_access() is the ONLY authority; if denied, drop the
+          // session and stay on the login page. Never treat SIGNED_IN as member.
           const memberCheck = await verifyMemberAccess();
-          const name = memberCheck.full_name || session.user.email || 'Member';
-          setCurrentUserRole('member');
-          setCurrentUserName(name);
-          localStorage.setItem('user_role', 'member');
-          localStorage.setItem('user_name', name);
-          setAuthenticated(true);
-          showToast(`Login Member Berhasil! (${name})`, 'success');
+          if (!memberCheck.allowed) {
+            await authSignOut();
+            setAuthenticated(false);
+            setCurrentCanonicalUserId(null);
+            localStorage.removeItem('user_canonical_id');
+            showToast(memberCheck.reason || 'Akses ditolak: Akun belum terdaftar sebagai member terverifikasi.', 'error');
+          } else {
+            const name = memberCheck.full_name || session.user.email || 'Member';
+            setCurrentUserRole('member');
+            setCurrentUserName(name);
+            setCurrentCanonicalUserId(memberCheck.user_id ?? null);
+            localStorage.setItem('user_role', 'member');
+            localStorage.setItem('user_name', name);
+            if (memberCheck.user_id != null) localStorage.setItem('user_canonical_id', String(memberCheck.user_id));
+            setAuthenticated(true);
+            showToast(`Login Member Berhasil! (${name})`, 'success');
+          }
         }
       } else if (event === 'SIGNED_OUT') {
         setAuthenticated(false);
@@ -681,10 +700,23 @@ export default function App() {
     try { 
       const isMember = currentUserRole === 'member' || window.location.pathname.toLowerCase().startsWith('/member');
       if (isMember) {
-        const tRes = await supabase.from('tickets').select('*').order('created_at', { ascending: false });
-        const pRes = await supabase.from('payments').select('*').order('created_at', { ascending: false });
-        setTickets((tRes.data as any) || []);
-        setPayments((pRes.data as any) || []);
+        // Canonical scoping: tickets.user_id / payments.user_id reference
+        // public.users.id (BIGSERIAL). Filter server-side via .eq() — RLS is
+        // the backstop, but the query must be scoped explicitly. Never use
+        // telegram_id for these columns.
+        const cid = currentCanonicalUserId;
+        if (cid != null) {
+          const [tRes, pRes] = await Promise.all([
+            supabase.from('tickets').select('*').eq('user_id', cid).order('created_at', { ascending: false }),
+            supabase.from('payments').select('*').eq('user_id', cid).order('created_at', { ascending: false }),
+          ]);
+          setTickets((tRes.data as any) || []);
+          setPayments((pRes.data as any) || []);
+        } else {
+          // No canonical identity -> no business data. Empty, honest state.
+          setTickets([]);
+          setPayments([]);
+        }
         return;
       }
 
@@ -1010,9 +1042,9 @@ export default function App() {
       <MemberPortalView 
         name={currentUserName}
         telegramId={currentUserTelegramId}
-        tickets={tickets.filter(t => String(t.user_id) === String(currentUserTelegramId) || t.user_name === currentUserName)}
-        payments={payments.filter(p => String(p.user_id) === String(currentUserTelegramId))}
-        domains={domains.filter(d => String(d.user?.telegram_id) === String(currentUserTelegramId) || d.user?.full_name === currentUserName)}
+        tickets={tickets.filter(t => String(t.user_id) === String(currentCanonicalUserId))}
+        payments={payments.filter(p => String(p.user_id) === String(currentCanonicalUserId))}
+        domains={domains.filter(d => d.user?.full_name === currentUserName)}
         onLogout={handleLogout}
         onRefresh={load}
         showToast={showToast}
