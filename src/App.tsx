@@ -94,12 +94,15 @@ import {
   DOMAIN_PRICES,
   DomainOrderRequest,
   getDomainOrdersList,
+  fetchDomainOrders,
   saveDomainOrder,
   MemberDomainInventory,
   getMemberInventoryList,
+  fetchMemberInventories,
   saveMemberInventoryItem,
   TechnicalCase,
   getTechnicalCasesList,
+  fetchTechnicalCases,
   saveTechnicalCase,
   DomainCredential
 } from './lib/api';
@@ -443,9 +446,9 @@ export default function App() {
     const raw = localStorage.getItem('user_canonical_id');
     return raw ? Number(raw) : null;
   });
-  const [domainOrders, setDomainOrders] = useState<DomainOrderRequest[]>(() => getDomainOrdersList());
-  const [memberInventories, setMemberInventories] = useState<MemberDomainInventory[]>(() => getMemberInventoryList());
-  const [technicalCases, setTechnicalCases] = useState<TechnicalCase[]>(() => getTechnicalCasesList());
+  const [domainOrders, setDomainOrders] = useState<DomainOrderRequest[]>([]);
+  const [memberInventories, setMemberInventories] = useState<MemberDomainInventory[]>([]);
+  const [technicalCases, setTechnicalCases] = useState<TechnicalCase[]>([]);
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
   const [commandInput, setCommandInput] = useState('');
 
@@ -699,6 +702,11 @@ export default function App() {
     setError(''); 
     try { 
       const isMember = currentUserRole === 'member' || window.location.pathname.toLowerCase().startsWith('/member');
+      // Server-backed operational lists (migration 032). Non-fatal: a failed
+      // fetch leaves the list empty with a console note — never fake data.
+      fetchDomainOrders().then(setDomainOrders).catch(e => console.warn('domain_order_requests fetch note:', e));
+      fetchMemberInventories().then(setMemberInventories).catch(e => console.warn('member_domain_inventories fetch note:', e));
+      fetchTechnicalCases().then(setTechnicalCases).catch(e => console.warn('technical_rescue_cases fetch note:', e));
       if (isMember) {
         // Canonical scoping: tickets.user_id / payments.user_id reference
         // public.users.id (BIGSERIAL). Filter server-side via .eq() — RLS is
@@ -4350,8 +4358,9 @@ function TechnicalRescueHub({ cases: initialCases, onUpdateCases, onToast }: {
         actionTaken: '18 URLs dipush ke Google & Bing IndexNow.',
         timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19),
       };
-      saveTechnicalCase(newCase);
-      onUpdateCases(getTechnicalCasesList());
+      saveTechnicalCase(newCase)
+        .then(() => onUpdateCases(getTechnicalCasesList()))
+        .catch((e: any) => onToast(`Gagal menyimpan kasus ke server: ${e.message}`, 'error'));
     }, 1800);
   };
 
@@ -4819,9 +4828,12 @@ server {
                   onClick={() => {
                     const newStatus = cs.status === 'resolved' ? 'fixing' : 'resolved';
                     const updated = initialCases.map(c => c.id === cs.id ? { ...c, status: newStatus as any } : c);
-                    onUpdateCases(updated);
-                    saveTechnicalCase({ ...cs, status: newStatus as any });
-                    onToast(`Status kasus ${cs.id} diperbarui menjadi ${newStatus}.`, 'success');
+                    saveTechnicalCase({ ...cs, status: newStatus as any })
+                      .then(() => {
+                        onUpdateCases(updated);
+                        onToast(`Status kasus ${cs.id} diperbarui menjadi ${newStatus}.`, 'success');
+                      })
+                      .catch((e: any) => onToast(`Gagal menyimpan status kasus: ${e.message}`, 'error'));
                   }}
                   className="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-bold transition cursor-pointer"
                 >
@@ -4922,11 +4934,12 @@ function DomainOrdersView({ orders: initialOrders, onUpdateOrders, onToast }: {
         whoisStatus: res.status === 'registered' ? 'registered' : 'available',
         notes: `WHOIS Google DoH: ${res.message}. NS: ${res.nameservers.join(', ') || 'None'}`
       };
-      saveDomainOrder(updatedOrder);
-      const updatedList = ordersList.map(o => o.id === order.id ? updatedOrder : o);
-      setOrdersList(updatedList);
-      onUpdateOrders(updatedList);
-      onToast(`Cek WHOIS ${order.domainName}: ${res.status.toUpperCase()}`, 'success');
+      saveDomainOrder(updatedOrder).then(() => {
+        const updatedList = ordersList.map(o => o.id === order.id ? updatedOrder : o);
+        setOrdersList(updatedList);
+        onUpdateOrders(updatedList);
+        onToast(`Cek WHOIS ${order.domainName}: ${res.status.toUpperCase()}`, 'success');
+      }).catch((e: any) => onToast(`Gagal menyimpan hasil WHOIS ke server: ${e.message}`, 'error'));
     } catch (e: any) {
       onToast(`Gagal cek WHOIS: ${e.message}`, 'error');
     } finally {
@@ -4944,11 +4957,14 @@ function DomainOrdersView({ orders: initialOrders, onUpdateOrders, onToast }: {
       updatedOrder.nameservers = ['eva.ns.cloudflare.com', 'walt.ns.cloudflare.com'];
       updatedOrder.cloudflareDnsProxy = true;
     }
-    saveDomainOrder(updatedOrder);
-    const updatedList = ordersList.map(o => o.id === order.id ? updatedOrder : o);
-    setOrdersList(updatedList);
-    onUpdateOrders(updatedList);
-    onToast(`Status order ${order.domainName} diperbarui ke ${nextStatus}.`, 'success');
+    saveDomainOrder(updatedOrder)
+      .then(() => {
+        const updatedList = ordersList.map(o => o.id === order.id ? updatedOrder : o);
+        setOrdersList(updatedList);
+        onUpdateOrders(updatedList);
+        onToast(`Status order ${order.domainName} diperbarui ke ${nextStatus}.`, 'success');
+      })
+      .catch((e: any) => onToast(`Gagal menyimpan status order ke server: ${e.message}`, 'error'));
   };
 
   const handleCreateNewOrder = async (e: React.FormEvent) => {
@@ -5283,19 +5299,22 @@ function MemberInventoryView({ inventories: initialInventories, onUpdateInventor
       verifiedBy: 'Super Admin',
     };
 
-    saveMemberInventoryItem(newItem);
-    const updated = [newItem, ...inventoriesList];
-    setInventoriesList(updated);
-    onUpdateInventories(updated);
-    setNewRegModal(false);
-    setFullName('');
-    setTelegramId('');
-    setUsername('');
-    setPhone('');
-    setBankAccount('');
-    setDomainsText('');
-    setCredentialsText('');
-    onToast(`Data pendaftaran ulang member ${fullName} berhasil disimpan.`, 'success');
+    saveMemberInventoryItem(newItem)
+      .then(() => {
+        const updated = [newItem, ...inventoriesList];
+        setInventoriesList(updated);
+        onUpdateInventories(updated);
+        setNewRegModal(false);
+        setFullName('');
+        setTelegramId('');
+        setUsername('');
+        setPhone('');
+        setBankAccount('');
+        setDomainsText('');
+        setCredentialsText('');
+        onToast(`Data pendaftaran ulang member ${fullName} berhasil disimpan.`, 'success');
+      })
+      .catch((e: any) => onToast(`Gagal menyimpan inventaris ke server: ${e.message}`, 'error'));
   };
 
   const handleExportCSV = () => {
@@ -8213,7 +8232,8 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
       updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
     };
 
-    saveDomainOrder(newOrder);
+    saveDomainOrder(newOrder)
+      .catch((e: any) => showToast(`Gagal menyimpan order ke server: ${e.message}`, 'error'));
 
     // Also add to private tickets queue
     const ticketId = Math.floor(700 + Math.random() * 299);
@@ -8323,8 +8343,9 @@ function MemberPortalView({ name, telegramId, tickets: initialTickets, payments,
       registeredAt: new Date().toISOString().substring(0, 10),
     };
     setMyInventory(updated);
-    saveMemberInventoryItem(updated);
-    showToast(`Data pendaftaran ulang & inventaris ${dList.length} domain berhasil disimpan!`, 'success');
+    saveMemberInventoryItem(updated)
+      .then(() => showToast(`Data pendaftaran ulang & inventaris ${dList.length} domain berhasil disimpan!`, 'success'))
+      .catch((e: any) => showToast(`Gagal menyimpan inventaris ke server: ${e.message}`, 'error'));
   };
 
   const handleCreateTicketSubmit = (e: React.FormEvent) => {

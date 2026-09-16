@@ -658,76 +658,64 @@ export interface DomainOrderRequest {
   updatedAt: string;
 }
 
-export const INITIAL_DOMAIN_ORDERS: DomainOrderRequest[] = [
-  {
-    id: 'DORD-101',
-    ticketNumber: 'REQ-DOM-101',
-    telegramId: '7862805424',
-    requesterName: 'Abiedien Root',
-    domainName: 'kopimax.com',
-    domainExt: '.com',
-    priceIdr: 170000,
-    status: 'active',
-    whoisStatus: 'registered',
-    nameservers: ['eva.ns.cloudflare.com', 'walt.ns.cloudflare.com'],
-    cloudflareDnsProxy: true,
-    notes: 'Domain utama slot demo landing & Cloudflare Edge Brotli aktif.',
-    createdAt: '2026-09-07 08:30:00',
-    updatedAt: '2026-09-07 09:15:00',
-  },
-  {
-    id: 'DORD-102',
-    ticketNumber: 'REQ-DOM-102',
-    telegramId: '8625074832',
-    requesterName: 'Operator Jaya',
-    domainName: 'zeusgacor77.com',
-    domainExt: '.com',
-    priceIdr: 170000,
-    status: 'dns_cloudflare_setup',
-    whoisStatus: 'available',
-    nameservers: ['dora.ns.cloudflare.com', 'luke.ns.cloudflare.com'],
-    cloudflareDnsProxy: true,
-    notes: 'Pendaftaran registrar sukses, dalam proses routing SSL & DNS Anycast.',
-    createdAt: '2026-09-07 10:12:00',
-    updatedAt: '2026-09-07 11:20:00',
-  },
-  {
-    id: 'DORD-103',
-    ticketNumber: 'REQ-DOM-103',
-    telegramId: '8627900503',
-    requesterName: 'Member Rian',
-    domainName: 'olympusmaxwin.com',
-    domainExt: '.com',
-    priceIdr: 170000,
-    status: 'waiting_payment',
-    whoisStatus: 'available',
-    nameservers: ['Menunggu Konfirmasi Pembayaran'],
-    cloudflareDnsProxy: false,
-    notes: 'Bukti transfer pembayaran Rp 170.000 sedang diverifikasi Admin.',
-    createdAt: '2026-09-07 11:45:00',
-    updatedAt: '2026-09-07 11:45:00',
-  },
-];
 
-export function getDomainOrdersList(): DomainOrderRequest[] {
+
+// Canonical remote store for operational lists (migration 032).
+// localStorage is only a read cache; Supabase tables are the authority.
+type ListRow = { id: string; status: string; data: unknown };
+
+async function fetchList<T>(table: string, cacheKey: string, fallback: T[]): Promise<T[]> {
+  if (!isSupabaseConfigured) return fallback;
   try {
-    const raw = localStorage.getItem('domain_order_requests');
-    if (raw) return JSON.parse(raw);
-  } catch (_) {}
-  return INITIAL_DOMAIN_ORDERS;
+    const { data, error } = await supabase.from(table).select('id,status,data').order('updated_at', { ascending: false });
+    if (error) throw error;
+    const items = (data || []).map((r: ListRow) => ({ ...(r.data as T), id: r.id, status: (r.data as T & { status?: string }).status ?? r.status }));
+    try { localStorage.setItem(cacheKey, JSON.stringify(items)); } catch (_) {}
+    return items;
+  } catch (e: any) {
+    console.warn(`[store] ${table} fetch failed, using cache:`, e?.message);
+    try {
+      const raw = localStorage.getItem(cacheKey);
+      if (raw) return JSON.parse(raw);
+    } catch (_) {}
+    return fallback;
+  }
 }
 
-export function saveDomainOrder(order: DomainOrderRequest): void {
-  const current = getDomainOrdersList();
-  const exists = current.findIndex(o => o.id === order.id);
-  let updated: DomainOrderRequest[];
-  if (exists >= 0) {
-    updated = [...current];
-    updated[exists] = order;
-  } else {
-    updated = [order, ...current];
-  }
-  localStorage.setItem('domain_order_requests', JSON.stringify(updated));
+async function saveListItem<T extends { id: string; status?: string }>(table: string, cacheKey: string, item: T): Promise<void> {
+  if (!isSupabaseConfigured) throw new Error('Supabase tidak terkonfigurasi — data tidak disimpan ke server.');
+  const { error } = await supabase
+    .from(table)
+    .upsert({ id: item.id, status: (item.status as string) || 'active', data: item, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+  if (error) throw new Error(`Gagal menyimpan ke server (${table}): ${error.message}`);
+  const current = readCache<T>(cacheKey);
+  const idx = current.findIndex((x: T & { id: string }) => x.id === item.id);
+  if (idx >= 0) current[idx] = item; else current.unshift(item);
+  try { localStorage.setItem(cacheKey, JSON.stringify(current)); } catch (_) {}
+}
+
+function readCache<T>(cacheKey: string): T[] {
+  try {
+    const raw = localStorage.getItem(cacheKey);
+    if (raw) return JSON.parse(raw);
+  } catch (_) {}
+  return [];
+}
+
+// ==========================================
+// DOMAIN ORDERS (server-backed)
+// ==========================================
+
+export function getDomainOrdersList(): DomainOrderRequest[] {
+  return readCache<DomainOrderRequest>('domain_order_requests');
+}
+
+export async function fetchDomainOrders(): Promise<DomainOrderRequest[]> {
+  return fetchList<DomainOrderRequest>('domain_order_requests', 'domain_order_requests', []);
+}
+
+export async function saveDomainOrder(order: DomainOrderRequest): Promise<void> {
+  await saveListItem('domain_order_requests', 'domain_order_requests', order);
 }
 
 // ==========================================
@@ -756,84 +744,18 @@ export interface MemberDomainInventory {
   verifiedBy?: string;
 }
 
-export const INITIAL_MEMBER_INVENTORIES: MemberDomainInventory[] = [
-  {
-    id: 'MEM-INV-001',
-    telegramId: '7862805424',
-    fullName: 'Abiedien Super Admin',
-    username: '@abiedien_root',
-    phoneWhatsapp: '081234567890',
-    bankName: 'BCA',
-    bankAccount: '8820192831',
-    domainCount: 5,
-    domainList: ['kopimax.com', 'abiedien.org', 'slotdemo-resmi.com', 'zeusvip.net', 'olympus77.com'],
-    domainCredentials: [
-      { domain: 'kopimax.com', user: 'admin', pass: '••••••••' },
-      { domain: 'abiedien.org', user: 'admin', pass: '••••••••' },
-      { domain: 'slotdemo-resmi.com', user: 'admin', pass: '••••••••' },
-      { domain: 'zeusvip.net', user: 'admin', pass: '••••••••' },
-      { domain: 'olympus77.com', user: 'admin', pass: '••••••••' }
-    ],
-    status: 'active',
-    registeredAt: '2026-09-01 10:00:00',
-    verifiedBy: 'System Auto-Root',
-  },
-  {
-    id: 'MEM-INV-002',
-    telegramId: '8625074832',
-    fullName: 'Budi Santoso',
-    username: '@budisantoso',
-    phoneWhatsapp: '085712349988',
-    bankName: 'MANDIRI',
-    bankAccount: '1420019283711',
-    domainCount: 2,
-    domainList: ['zeusgacor77.com', 'maxwinhoki88.com'],
-    domainCredentials: [
-      { domain: 'zeusgacor77.com', user: 'budi_ops', pass: '••••••••' },
-      { domain: 'maxwinhoki88.com', user: 'budi_ops', pass: '••••••••' }
-    ],
-    status: 'active',
-    registeredAt: '2026-09-05 14:20:00',
-    verifiedBy: 'Super Admin',
-  },
-  {
-    id: 'MEM-INV-003',
-    telegramId: '8627900503',
-    fullName: 'Rian Pratama',
-    username: '@rianpratama',
-    phoneWhatsapp: '081988223344',
-    bankName: 'BRI',
-    bankAccount: '0129018291823',
-    domainCount: 1,
-    domainList: ['olympusmaxwin.com'],
-    domainCredentials: [
-      { domain: 'olympusmaxwin.com', user: 'rian_slot', pass: '••••••••' }
-    ],
-    status: 'pending_verification',
-    registeredAt: '2026-09-07 11:30:00',
-    verifiedBy: 'Menunggu Verifikasi',
-  },
-];
+
 
 export function getMemberInventoryList(): MemberDomainInventory[] {
-  try {
-    const raw = localStorage.getItem('member_domain_inventories');
-    if (raw) return JSON.parse(raw);
-  } catch (_) {}
-  return INITIAL_MEMBER_INVENTORIES;
+  return readCache<MemberDomainInventory>('member_domain_inventories');
 }
 
-export function saveMemberInventoryItem(item: MemberDomainInventory): void {
-  const current = getMemberInventoryList();
-  const exists = current.findIndex(m => m.id === item.id || m.telegramId === item.telegramId);
-  let updated: MemberDomainInventory[];
-  if (exists >= 0) {
-    updated = [...current];
-    updated[exists] = item;
-  } else {
-    updated = [item, ...current];
-  }
-  localStorage.setItem('member_domain_inventories', JSON.stringify(updated));
+export async function fetchMemberInventories(): Promise<MemberDomainInventory[]> {
+  return fetchList<MemberDomainInventory>('member_domain_inventories', 'member_domain_inventories', []);
+}
+
+export async function saveMemberInventoryItem(item: MemberDomainInventory): Promise<void> {
+  await saveListItem('member_domain_inventories', 'member_domain_inventories', item);
 }
 
 // ==========================================
@@ -852,59 +774,16 @@ export interface TechnicalCase {
   timestamp: string;
 }
 
-export const INITIAL_TECHNICAL_CASES: TechnicalCase[] = [
-  {
-    id: 'TECH-001',
-    caseType: 'INDEX_LOST',
-    title: 'Google Search Console Drop: De-indexing 12 Landing Pages',
-    targetDomain: 'kopimax.com',
-    originServer: '172.67.182.91 (Cloudflare Edge)',
-    status: 'resolved',
-    diagnosticResult: 'Robots.txt terpasang noindex dari build lama. Canonical URL mismatch.',
-    actionTaken: 'Push Indexing Blast API dieksekusi ke 12 Google & Bing Indexing Endpoints. Sitemap XML regenerasi.',
-    timestamp: '2026-09-07 09:20:00',
-  },
-  {
-    id: 'TECH-002',
-    caseType: 'DNS_FAILOVER',
-    title: 'DNS Resolution Error 522 Origin Connection Timeout',
-    targetDomain: 'zeusgacor77.com',
-    originServer: '104.21.55.120 (SG-Origin-01)',
-    status: 'fixing',
-    diagnosticResult: 'Origin upstream membatasi koneksi port 443 saat surge traffic 1.200 RPS.',
-    actionTaken: 'Bypass proxy failover dialihkan ke Anycast Secondary POP Jakarta & Brotli cache level 11.',
-    timestamp: '2026-09-07 11:10:00',
-  },
-  {
-    id: 'TECH-003',
-    caseType: 'SERVER_MIGRATION',
-    title: 'Migrasi Node Backend Database Supabase & Reverse Proxy Nginx',
-    targetDomain: 'abiedien.org',
-    originServer: 'Supabase pnvnpencatzspkwxspac.supabase.co',
-    status: 'investigating',
-    diagnosticResult: 'Rencana perpindahan origin ke clustered VPS Frankfurt dengan zero downtime.',
-    actionTaken: 'Generator Nginx upstream proxy disiapkan dengan healthcheck 5 detik.',
-    timestamp: '2026-09-07 12:00:00',
-  },
-];
+
 
 export function getTechnicalCasesList(): TechnicalCase[] {
-  try {
-    const raw = localStorage.getItem('technical_rescue_cases');
-    if (raw) return JSON.parse(raw);
-  } catch (_) {}
-  return INITIAL_TECHNICAL_CASES;
+  return readCache<TechnicalCase>('technical_rescue_cases');
 }
 
-export function saveTechnicalCase(item: TechnicalCase): void {
-  const current = getTechnicalCasesList();
-  const exists = current.findIndex(t => t.id === item.id);
-  let updated: TechnicalCase[];
-  if (exists >= 0) {
-    updated = [...current];
-    updated[exists] = item;
-  } else {
-    updated = [item, ...current];
-  }
-  localStorage.setItem('technical_rescue_cases', JSON.stringify(updated));
+export async function fetchTechnicalCases(): Promise<TechnicalCase[]> {
+  return fetchList<TechnicalCase>('technical_rescue_cases', 'technical_rescue_cases', []);
+}
+
+export async function saveTechnicalCase(item: TechnicalCase): Promise<void> {
+  await saveListItem('technical_rescue_cases', 'technical_rescue_cases', item);
 }
