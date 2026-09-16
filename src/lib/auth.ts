@@ -16,32 +16,25 @@ export interface AdminAccount {
 }
 
 // Create new admin account (Super Admin only)
+//
+// SECURITY BOUNDARY: creating, updating, or deleting Supabase Auth users
+// requires the service_role key. Browsers only have the anon key, so these
+// operations must be performed by a server-side Edge Function. These helpers
+// fail closed with an explicit server-required error instead of calling the
+// unavailable admin API (and they never confuse admin_accounts.id with
+// auth.users.id).
 export async function createAdminAccount(
-  creatorTelegramId: number,
-  email: string,
-  password: string,
-  role: 'dev' | 'admin',
-  fullName: string,
-  telegramId?: number
+  _creatorTelegramId: number,
+  _email: string,
+  _password: string,
+  _role: 'dev' | 'admin',
+  _fullName: string,
+  _telegramId?: number
 ): Promise<{ success: boolean; error?: string }> {
-  try {
-    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: { full_name: fullName, role, telegram_id: telegramId, created_by: creatorTelegramId },
-    });
-    if (authError) return { success: false, error: authError.message };
-    if (!authData.user) return { success: false, error: 'Failed to create user' };
-
-    const { error: dbError } = await supabase.from('admin_accounts').insert({
-      auth_user_id: authData.user.id, email, role, telegram_id: telegramId, full_name: fullName, is_active: true, created_by: creatorTelegramId,
-    });
-    if (dbError) return { success: false, error: dbError.message };
-    return { success: true };
-  } catch (e: any) {
-    return { success: false, error: e.message };
-  }
+  return {
+    success: false,
+    error: 'Operasi ini hanya tersedia melalui server Edge Function (service_role).',
+  };
 }
 
 // Update admin account (Super Admin only)
@@ -59,27 +52,26 @@ export async function updateAdminAccount(
 }
 
 // Reset admin password (Super Admin only)
-export async function resetAdminPassword(adminId: string, newPassword: string): Promise<{ success: boolean; error?: string }> {
-  try {
-    const { error } = await supabase.auth.admin.updateUserById(adminId, { password: newPassword });
-    if (error) return { success: false, error: error.message };
-    return { success: true };
-  } catch (e: any) {
-    return { success: false, error: e.message };
-  }
+//
+// Server-only: resetting another user's Auth password requires service_role.
+// The browser helper fails closed so the UI cannot imply success. It also
+// accepts only the Auth user id (never admin_accounts.id) to avoid id mixing.
+export async function resetAdminPassword(_authUserId: string, _newPassword: string): Promise<{ success: boolean; error?: string }> {
+  return {
+    success: false,
+    error: 'Reset password admin hanya tersedia melalui server Edge Function (service_role).',
+  };
 }
 
 // Delete admin account (Super Admin only)
-export async function deleteAdminAccount(adminId: string): Promise<{ success: boolean; error?: string }> {
-  try {
-    const { error: dbError } = await supabase.from('admin_accounts').delete().eq('id', adminId);
-    if (dbError) return { success: false, error: dbError.message };
-    const { error: authError } = await supabase.auth.admin.deleteUser(adminId);
-    if (authError) return { success: false, error: authError.message };
-    return { success: true };
-  } catch (e: any) {
-    return { success: false, error: e.message };
-  }
+//
+// Server-only for the same reason. Accepts only the Auth user id; deleting
+// the admin_accounts row must happen server-side in one transaction.
+export async function deleteAdminAccount(_authUserId: string): Promise<{ success: boolean; error?: string }> {
+  return {
+    success: false,
+    error: 'Hapus akun admin hanya tersedia melalui server Edge Function (service_role).',
+  };
 }
 
 // Get all admin accounts (Super Admin only)
@@ -93,26 +85,63 @@ export async function getAdminAccounts(): Promise<AdminAccount[]> {
 
 
 // ==========================================
-// EMAIL + PASSWORD LOGIN (Option A)
+// EMAIL + PASSWORD LOGIN (Option A - canonical, role-agnostic)
+// Contract:
+//   - This function ONLY authenticates against Supabase Auth.
+//   - It NEVER decides role (no admin/member check here).
+//   - Role is decided by the caller via verifyAdminAccess() or
+//     verifyMemberAccess() AFTER a real session exists.
+//   - Returns the REAL session.access_token, NEVER user.id.
 // ==========================================
 
 export async function loginWithEmail(
   email: string,
   password: string
-): Promise<{ success: boolean; user?: any; error?: string; role?: string }> {
+): Promise<{ success: boolean; user?: any; session?: any; access_token?: string; error?: string }> {
   try {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { success: false, error: error.message };
-    if (!data.user) return { success: false, error: 'Login failed' };
+    if (!data.user || !data.session?.access_token) return { success: false, error: 'Login failed: no session' };
 
-    const { access, role } = await checkUserAdminAccess(data.user.id);
-    if (!access) return { success: false, error: 'Akses ditolak. Hubungi Super Admin.' };
-
-    await supabase.from('admin_accounts').update({ last_login: new Date().toISOString() }).eq('auth_user_id', data.user.id);
-    return { success: true, user: data.user, role };
+    return { success: true, user: data.user, session: data.session, access_token: data.session.access_token };
   } catch (e: any) {
     return { success: false, error: e.message };
   }
+}
+
+// Admin email login: Supabase Auth + verify_admin_access (RPC, fail-closed)
+export async function loginAdminWithEmail(
+  email: string,
+  password: string
+): Promise<{ success: boolean; user?: any; session?: any; access_token?: string; role?: string; error?: string }> {
+  const base = await loginWithEmail(email, password);
+  if (!base.success) return base;
+
+    const { access, role } = await checkUserAdminAccess(base.user.id);
+    if (!access) {
+      await supabase.auth.signOut();
+      return { success: false, error: 'Akses ditolak. Hubungi Super Admin.' };
+    }
+
+    await supabase.from('admin_accounts').update({ last_login: new Date().toISOString() }).eq('auth_user_id', base.user.id);
+    return { ...base, role };
+}
+
+// Member email login: Supabase Auth + verify_member_access (RPC, fail-closed)
+export async function loginMemberWithEmail(
+  email: string,
+  password: string
+): Promise<{ success: boolean; user?: any; session?: any; access_token?: string; role?: string; full_name?: string; username?: string; error?: string }> {
+  const base = await loginWithEmail(email, password);
+  if (!base.success) return base;
+
+  const check = await verifyMemberAccess();
+  if (!check.allowed) {
+    await supabase.auth.signOut();
+    return { success: false, error: check.reason || 'Akses ditolak: akun belum terdaftar sebagai member terverifikasi.' };
+  }
+
+  return { ...base, role: check.role, full_name: check.full_name, username: check.username };
 }
 
 // ==========================================
@@ -243,7 +272,7 @@ export async function loginWithWhatsApp(phone: string): Promise<{ success: boole
   }
 }
 
-export async function verifyWhatsAppOtp(phone: string, token: string): Promise<{ success: boolean; user?: any; error?: string }> {
+export async function verifyWhatsAppOtp(phone: string, token: string): Promise<{ success: boolean; user?: any; session?: any; access_token?: string; error?: string }> {
   try {
     let cleanPhone = phone.trim().replace(/\s+/g, '').replace(/-/g, '');
     if (cleanPhone.startsWith('08')) {
@@ -260,8 +289,8 @@ export async function verifyWhatsAppOtp(phone: string, token: string): Promise<{
       type: 'sms',
     });
     if (error) return { success: false, error: error.message };
-    if (!data.user) return { success: false, error: 'Verifikasi OTP gagal' };
-    return { success: true, user: data.user };
+    if (!data.session?.access_token) return { success: false, error: 'Verifikasi OTP gagal: tidak ada session.' };
+    return { success: true, user: data.user, session: data.session, access_token: data.session.access_token };
   } catch (e: any) {
     return { success: false, error: e.message };
   }
@@ -288,15 +317,28 @@ export async function verifyAdminAccess(): Promise<{ allowed: boolean; role?: st
 }
 
 export async function verifyMemberAccess(): Promise<{ allowed: boolean; role: string; user_id?: number; username?: string; full_name?: string; reason?: string }> {
+  // Fail-closed canonical resolver: Supabase Auth -> verify_member_access RPC.
+  // Any error, missing session, or denied RPC result returns allowed:false. No fail-open.
   try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token || !session.user) {
+      return { allowed: false, role: 'member', reason: 'Belum login' };
+    }
     const { data, error } = await supabase.rpc('verify_member_access');
     if (error) {
-      const { data: { user } } = await supabase.auth.getUser();
-      return { allowed: !!user, role: 'member', full_name: user?.email };
+      console.warn('RPC verify_member_access error (fail-closed):', error);
+      return { allowed: false, role: 'member', reason: 'Verifikasi member gagal. Hubungi admin.' };
     }
-    return data || { allowed: true, role: 'member' };
+    if (!data || typeof data.allowed !== 'boolean') {
+      return { allowed: false, role: 'member', reason: 'Respons verifikasi tidak valid.' };
+    }
+    if (!data.allowed) {
+      return { allowed: false, role: 'member', reason: data.reason || 'Akses ditolak: akun belum terdaftar sebagai member terverifikasi.' };
+    }
+    return { allowed: true, role: data.role || 'member', user_id: data.user_id, username: data.username, full_name: data.full_name };
   } catch (e: any) {
-    return { allowed: true, role: 'member', reason: e.message };
+    console.warn('verifyMemberAccess exception (fail-closed):', e?.message);
+    return { allowed: false, role: 'member', reason: 'Verifikasi member gagal. Hubungi admin.' };
   }
 }
 
@@ -331,18 +373,25 @@ export async function registerMember(params: {
     if (authError) return { success: false, error: authError.message };
     if (!authData.user) return { success: false, error: 'Gagal membuat akun member' };
 
-    // 2. Insert/sync to public.users
-    try {
-      await supabase.from('users').insert({
-        username: email.split('@')[0],
-        full_name: fullName.trim(),
-        role: 'member',
-        status: 'active',
-        phone_number: phone?.trim() || null,
-        domain_verified: false,
-      });
-    } catch (dbErr) {
-      console.warn('Sync to public.users note:', dbErr);
+    // 2. public.users row is REQUIRED. Canonical schema (live):
+    //    telegram_id BIGINT UNIQUE NOT NULL, phone_encrypted BYTEA — there is
+    //    NO phone_number column. The browser cannot mint a telegram_id, so the
+    //    row is created by an admin/telegram onboarding path; the browser can
+    //    only CLAIM (link) the pre-provisioned row matching the confirmed
+    //    email via the link_identity() RPC (Security Definer, one-to-one
+    //    guarded). Any failure here is a hard registration failure — no
+    //    silent false-success orphaning auth.users.
+    const { data: link, error: linkError } = await supabase.rpc('link_identity');
+    if (linkError || !link?.linked) {
+      // Roll the Auth account back so no orphan auth user survives a failed claim.
+      await supabase.auth.signOut();
+      const reason = linkError?.message || link?.reason || 'unknown';
+      return {
+        success: false,
+        error:
+          'Pendaftaran tercatat di Supabase Auth, tetapi gagal dikaitkan ke akun member ' +
+          `(${reason}). Gunakan email yang sudah didaftarkan admin, atau hubungi admin.`,
+      };
     }
 
     return { success: true, user: authData.user };

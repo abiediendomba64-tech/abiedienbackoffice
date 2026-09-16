@@ -18,14 +18,15 @@ import {
   User,
   ExternalLink
 } from 'lucide-react';
-import { 
-  loginWithEmail, 
-  loginWithGoogle, 
-  loginWithWhatsApp, 
-  verifyWhatsAppOtp, 
+import {
+  loginMemberWithEmail,
+  loginWithGoogle,
+  loginWithWhatsApp,
+  verifyWhatsAppOtp,
   verifyMemberAccess,
   verifyTelegramWidgetPayload,
-  registerMember
+  registerMember,
+  signOut
 } from '../lib/auth';
 import { ForgotPasswordModal } from './ForgotPasswordModal';
 
@@ -62,7 +63,9 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
-  // Telegram Login Widget listener & Popup receiver
+  // Widget login is read-only verification only. It does NOT create a
+  // Supabase session, so it must NOT authenticate the app.
+  // Member must sign in via Email/Google/WhatsApp to get session.access_token.
   useEffect(() => {
     (window as any).onTelegramAuth = async (tgPayload: any) => {
       setLoading(true);
@@ -75,8 +78,15 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
           return;
         }
 
-        const name = res.user?.full_name || res.user?.username || tgPayload.first_name || 'Member';
-        onSuccess('member', name, 'tg-member-session');
+        if (res.role !== 'member') {
+          setErrorMessage('Akses ditolak: Akun Telegram ini belum terdaftar sebagai member.');
+          setLoading(false);
+          return;
+        }
+
+        setInfoMessage(
+          'Telegram terverifikasi. Untuk masuk, gunakan Email / Google / WhatsApp yang terhubung ke akun member Anda.'
+        );
       } catch (err: any) {
         setErrorMessage(err.message || 'Gagal verifikasi Telegram');
       } finally {
@@ -125,7 +135,7 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
     }
   };
 
-  // 2. Email Submit (Login)
+  // 2. Email Submit (Login) — canonical: Supabase Auth -> verify_member_access RPC
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -133,18 +143,22 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
     setInfoMessage(null);
 
     try {
-      const res = await loginWithEmail(email.trim(), password);
+      const res = await loginMemberWithEmail(email.trim(), password);
       if (!res.success) {
         setErrorMessage(res.error || 'Email atau password salah');
         setLoading(false);
         return;
       }
 
-      // Verify member access
-      const verification = await verifyMemberAccess();
-      const name = verification.full_name || verification.username || email;
-      const token = res.user?.id || 'member-session';
-      onSuccess('member', name, token);
+      if (!res.access_token) {
+        await signOut();
+        setErrorMessage('Login gagal: tidak ada session.');
+        setLoading(false);
+        return;
+      }
+
+      const name = res.full_name || res.username || email;
+      onSuccess('member', name, res.access_token);
     } catch (err: any) {
       setErrorMessage(err.message || 'Terjadi kesalahan autentikasi');
     } finally {
@@ -189,9 +203,23 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
         return;
       }
 
+      if (!res.access_token) {
+        await signOut();
+        setErrorMessage('Login gagal: tidak ada session.');
+        setLoading(false);
+        return;
+      }
+
       const verification = await verifyMemberAccess();
-      const name = verification.full_name || phone;
-      onSuccess('member', name, res.user?.id || 'wa-session');
+      if (!verification.allowed) {
+        await signOut();
+        setErrorMessage(verification.reason || 'Akses ditolak: Nomor WhatsApp ini tidak terhubung ke akun member.');
+        setLoading(false);
+        return;
+      }
+
+      const name = verification.full_name || verification.username || phone;
+      onSuccess('member', name, res.access_token);
     } catch (err: any) {
       setErrorMessage(err.message);
     } finally {

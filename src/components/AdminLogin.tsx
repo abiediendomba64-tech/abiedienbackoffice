@@ -14,14 +14,14 @@ import {
   Crown,
   ExternalLink
 } from 'lucide-react';
-import { 
-  loginWithEmail, 
-  loginWithGoogle, 
-  loginWithWhatsApp, 
-  verifyWhatsAppOtp, 
-  verifyAdminAccess, 
+import {
+  loginAdminWithEmail,
+  loginWithGoogle,
+  loginWithWhatsApp,
+  verifyWhatsAppOtp,
+  verifyAdminAccess,
   verifyTelegramWidgetPayload,
-  signOut 
+  signOut
 } from '../lib/auth';
 import { ForgotPasswordModal } from './ForgotPasswordModal';
 
@@ -48,7 +48,10 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateToM
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
-  // Telegram Login Widget listener & Popup receiver
+  // Widget login is read-only verification only. It does NOT create a
+  // Supabase session, so it must NOT authenticate the app.
+  // Admin must sign in via Email/Google/WhatsApp to get session.access_token.
+  // Telegram magic-link (/login in bot) remains the only Telegram session path.
   useEffect(() => {
     (window as any).onTelegramAuth = async (tgPayload: any) => {
       setLoading(true);
@@ -61,15 +64,16 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateToM
           return;
         }
 
-        const role = (res.role as any) || 'super_admin';
+        const role = (res.role as any) || 'guest';
         if (role !== 'super_admin' && role !== 'dev' && role !== 'admin') {
           setErrorMessage('Akses ditolak: Akun Telegram ini bukan Super Admin / Staf terdaftar.');
           setLoading(false);
           return;
         }
 
-        const name = res.user?.full_name || tgPayload.first_name || 'Super Admin';
-        onSuccess(role, name, 'tg-admin-session');
+        setInfoMessage(
+          'Telegram terverifikasi. Untuk masuk, gunakan Email / Google / WhatsApp, atau /login di bot untuk magic-link.'
+        );
       } catch (err: any) {
         setErrorMessage(err.message || 'Gagal verifikasi Telegram');
       } finally {
@@ -118,7 +122,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateToM
     }
   };
 
-  // 2. Email + Password
+  // 2. Email + Password (canonical AUTH: Supabase Auth -> verify_admin_access RPC)
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -126,26 +130,23 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateToM
     setInfoMessage(null);
 
     try {
-      const res = await loginWithEmail(email.trim(), password);
+      const res = await loginAdminWithEmail(email.trim(), password);
       if (!res.success) {
         setErrorMessage(res.error || 'Email atau password salah');
         setLoading(false);
         return;
       }
 
-      // Verify role post-login
-      const verification = await verifyAdminAccess();
-      if (!verification.allowed) {
+      if (!res.access_token) {
         await signOut();
-        setErrorMessage(verification.reason || `Akses ditolak: Akun (${email}) bukan Super Admin / Backoffice Staff yang terdaftar.`);
+        setErrorMessage('Login gagal: tidak ada session.');
         setLoading(false);
         return;
       }
 
-      const role = (verification.role as any) || 'super_admin';
-      const name = verification.full_name || email;
-      const token = res.user?.id || 'admin-session';
-      onSuccess(role, name, token);
+      const role = (res.role as any) || 'super_admin';
+      const name = res.user?.email || email;
+      onSuccess(role, name, res.access_token);
     } catch (err: any) {
       setErrorMessage(err.message || 'Terjadi kesalahan sistem');
     } finally {
@@ -190,6 +191,13 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateToM
         return;
       }
 
+      if (!res.session?.access_token) {
+        await signOut();
+        setErrorMessage('Login gagal: tidak ada session.');
+        setLoading(false);
+        return;
+      }
+
       const verification = await verifyAdminAccess();
       if (!verification.allowed) {
         await signOut();
@@ -200,7 +208,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateToM
 
       const role = (verification.role as any) || 'super_admin';
       const name = verification.full_name || phone;
-      onSuccess(role, name, res.user?.id || 'wa-session');
+      onSuccess(role, name, res.session.access_token);
     } catch (err: any) {
       setErrorMessage(err.message);
     } finally {
