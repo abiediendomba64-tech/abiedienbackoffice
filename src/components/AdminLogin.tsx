@@ -26,6 +26,7 @@ import {
   verifyTelegramWidgetPayload,
   signOut
 } from '../lib/auth';
+import { supabase } from '../lib/supabase';
 import { ForgotPasswordModal } from './ForgotPasswordModal';
 
 interface AdminLoginProps {
@@ -51,6 +52,43 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateToM
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
+
+  // Check OAuth callback / session on mount
+  useEffect(() => {
+    let isMounted = true;
+    const checkOAuthReturn = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user && session?.access_token) {
+          if (!isMounted) return;
+          setLoading(true);
+          const verification = await verifyAdminAccess();
+          if (!verification.allowed) {
+            await signOut();
+            if (isMounted) {
+              setErrorMessage(
+                verification.reason ||
+                'Akses ditolak: Akun Google ini tidak terdaftar sebagai Super Admin / Staf aktif di database backoffice.'
+              );
+              setLoading(false);
+            }
+            return;
+          }
+          const role = (verification.role as any) || 'super_admin';
+          const name = verification.full_name || session.user.email || 'Admin';
+          onSuccess(role, name, session.access_token);
+        }
+      } catch (err: any) {
+        await signOut();
+        if (isMounted) {
+          setErrorMessage(err.message || 'Gagal memverifikasi sesi OAuth.');
+          setLoading(false);
+        }
+      }
+    };
+    checkOAuthReturn();
+    return () => { isMounted = false; };
+  }, [onSuccess]);
 
   useEffect(() => {
     (window as any).onTelegramAuth = async (tgPayload: any) => {
