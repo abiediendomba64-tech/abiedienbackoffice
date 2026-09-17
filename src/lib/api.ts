@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from './supabase';
+import { supabase, isSupabaseConfigured, supabaseUrl, supabaseAnonKey } from './supabase';
 import { SupportTicket, AuditLog, LoginDetectionRecord } from '../types';
 
 export interface TelegramNotificationRecord {
@@ -57,18 +57,14 @@ export interface TelegramAuthPayload {
 }
 
 export async function loginWithTelegram(telegramPayload: TelegramAuthPayload): Promise<{ magic_link: string; email: string }> {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://pnvnpencatzspkwxspac.supabase.co';
-  const anonKey =
-    import.meta.env.VITE_SUPABASE_ANON_KEY ||
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBudm5wZW5jYXR6c3Brd3hzcGFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyNzE4NjgsImV4cCI6MjEwMzg0Nzg2OH0.dgpzQb7cnDkikLHqtw2RyYE_j5RUHI3QIELcjmy4_tY';
   const functionUrl = `${supabaseUrl}/functions/v1/telegram-auth`;
 
   const response = await fetch(functionUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'apikey': anonKey,
-      'Authorization': `Bearer ${anonKey}`,
+      'apikey': supabaseAnonKey,
+      'Authorization': `Bearer ${supabaseAnonKey}`,
     },
     body: JSON.stringify({ telegramPayload }),
   });
@@ -108,11 +104,6 @@ export async function getTelegramNotifications(): Promise<TelegramNotificationRe
 
 // Helper to invoke edge function
 async function invokeBackofficeApi(path: string, payload: any) {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://pnvnpencatzspkwxspac.supabase.co';
-  const anonKey =
-    import.meta.env.VITE_SUPABASE_ANON_KEY ||
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBudm5wZW5jYXR6c3Brd3hzcGFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyNzE4NjgsImV4cCI6MjEwMzg0Nzg2OH0.dgpzQb7cnDkikLHqtw2RyYE_j5RUHI3QIELcjmy4_tY';
-
   const session = await supabase.auth.getSession();
   const token = session.data.session?.access_token;
   if (!token) return { error: 'Not logged in' };
@@ -124,7 +115,7 @@ async function invokeBackofficeApi(path: string, payload: any) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'apikey': anonKey,
+        'apikey': supabaseAnonKey,
         'Authorization': `Bearer ${token}`,
       },
       body: JSON.stringify(payload),
@@ -666,16 +657,12 @@ export interface DomainOrderRequest {
 // No localStorage authority, no mock fallback: empty DB = empty UI.
 
 async function fetchBackoffice<T>(path: string, init?: RequestInit): Promise<T> {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://pnvnpencatzspkwxspac.supabase.co';
-  const anonKey =
-    import.meta.env.VITE_SUPABASE_ANON_KEY ||
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBudm5wZW5jYXR6c3Brd3hzcGFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyNzE4NjgsImV4cCI6MjEwMzg0Nzg2OH0.dgpzQb7cnDkikLHqtw2RyYE_j5RUHI3QIELcjmy4_tY';
   const session = await supabase.auth.getSession();
   const token = session.data.session?.access_token;
   if (!token) throw new Error('Sesi tidak ditemukan. Login terlebih dahulu.');
   const res = await fetch(`${supabaseUrl}/functions/v1/backoffice-api-v3${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', 'apikey': anonKey, 'Authorization': `Bearer ${token}`, ...(init?.headers || {}) },
+    headers: { 'Content-Type': 'application/json', 'apikey': supabaseAnonKey, 'Authorization': `Bearer ${token}`, ...(init?.headers || {}) },
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

@@ -109,7 +109,7 @@ import { AdminLogin } from './components/AdminLogin';
 import { MemberLogin } from './components/MemberLogin';
 import { ResetPasswordPage } from './components/ResetPasswordPage';
 import { verifyAdminAccess, verifyMemberAccess, signOut as authSignOut } from './lib/auth';
-import { supabase } from './lib/supabase';
+import { supabase, supabaseUrl, supabaseAnonKey } from './lib/supabase';
 
 declare global {
   interface Window {
@@ -257,9 +257,9 @@ const telegramTabs: { id: TelegramTab; label: string; shortLabel: string; icon: 
   { id: 'bot_simulator', label: 'Bot Simulator Sandbox', shortLabel: 'Simulator', icon: Terminal },
 ];
 
-const API_BASE = (import.meta.env.VITE_BACKOFFICE_API_URL || 'https://pnvnpencatzspkwxspac.supabase.co/functions/v1/backoffice-api-v3').replace(/\/$/, '');
-const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || 'https://pnvnpencatzspkwxspac.supabase.co').replace(/\/$/, '');
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const API_BASE = (import.meta.env.VITE_BACKOFFICE_API_URL || `${supabaseUrl}/functions/v1/backoffice-api-v3`).replace(/\/$/, '');
+const SUPABASE_URL = supabaseUrl;
+const SUPABASE_ANON_KEY = supabaseAnonKey;
 
 // ==========================================
 // API CLIENT
@@ -513,19 +513,15 @@ export default function App() {
         const platform = isMobile ? 'telegram_mobile' as const : 'telegram_desktop' as const;
 
         if (rawInitData) {
-          // Send initData to Edge Function for server-side HMAC verification
-          const supabaseUrl = (window as any).__SUPABASE_URL__ || import.meta.env?.VITE_SUPABASE_URL;
-          const supabaseAnonKey = (window as any).__SUPABASE_ANON_KEY__ || import.meta.env?.VITE_SUPABASE_ANON_KEY;
-
-          if (supabaseUrl && supabaseAnonKey) {
-            fetch(`${supabaseUrl}/functions/v1/telegram-auth`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${supabaseAnonKey}`,
-              },
-              body: JSON.stringify({ action: 'verify-init-data', initData: rawInitData }),
-            })
+          fetch(`${supabaseUrl}/functions/v1/telegram-auth`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': supabaseAnonKey,
+              'Authorization': `Bearer ${supabaseAnonKey}`,
+            },
+            body: JSON.stringify({ action: 'verify-init-data', initData: rawInitData }),
+          })
               .then(r => r.json())
               .then(res => {
                 if (res?.valid && res?.user) {
@@ -548,7 +544,6 @@ export default function App() {
                 }
               })
               .catch(err => console.warn('initData verification note:', err));
-          }
           // Do NOT set authenticated=true here — wait for magic link flow
           return;
         }
