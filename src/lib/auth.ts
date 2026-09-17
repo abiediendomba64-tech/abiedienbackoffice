@@ -182,7 +182,9 @@ export async function verifyMagicLink(email: string, token: string): Promise<{ s
 export async function loginTelegramWithEmail(telegramPayload: any, email: string): Promise<{ success: boolean; error?: string; role?: string }> {
   try {
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://pnvnpencatzspkwxspac.supabase.co';
-    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'ysb_publishable_DuriqtWguYDGW_G0etC7RA_uifeHA3M';
+    const anonKey =
+      import.meta.env.VITE_SUPABASE_ANON_KEY ||
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBudm5wZW5jYXR6c3Brd3hzcGFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyNzE4NjgsImV4cCI6MjEwMzg0Nzg2OH0.dgpzQb7cnDkikLHqtw2RyYE_j5RUHI3QIELcjmy4_tY';
     const functionUrl = `${supabaseUrl}/functions/v1/telegram-auth`;
     const response = await fetch(functionUrl, {
       method: 'POST',
@@ -204,7 +206,9 @@ export async function loginTelegramWithEmail(telegramPayload: any, email: string
 export async function verifyTelegramWidgetPayload(payload: any): Promise<{ success: boolean; user?: any; role?: string; token_hash?: string; email?: string; error?: string }> {
   try {
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://pnvnpencatzspkwxspac.supabase.co';
-    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'ysb_publishable_DuriqtWguYDGW_G0etC7RA_uifeHA3M';
+    const anonKey =
+      import.meta.env.VITE_SUPABASE_ANON_KEY ||
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBudm5wZW5jYXR6c3Brd3hzcGFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyNzE4NjgsImV4cCI6MjEwMzg0Nzg2OH0.dgpzQb7cnDkikLHqtw2RyYE_j5RUHI3QIELcjmy4_tY';
     const res = await fetch(`${supabaseUrl}/functions/v1/telegram-auth`, {
       method: 'POST',
       headers: {
@@ -502,47 +506,59 @@ async function checkUserAdminAccess(authUserId: string): Promise<{ access: boole
   try {
     const validRoles = ['super_admin', 'admin', 'dev'];
 
-    // 1. Check by auth_user_id in admin_accounts (Canonical Identity)
-    const { data } = await supabase
-      .from('admin_accounts')
-      .select('role, is_active')
-      .eq('auth_user_id', authUserId)
-      .maybeSingle();
-
-    if (data && data.is_active && validRoles.includes(data.role)) {
-      return { access: true, role: data.role };
-    }
-
-    // 2. Check by email fallback only if user is active and not bound to a different auth_user_id
-    const { data: { user } } = await supabase.auth.getUser();
-    const email = user?.email?.toLowerCase().trim();
-    if (email) {
-      const { data: byEmail } = await supabase
-        .from('admin_accounts')
-        .select('id, role, is_active, auth_user_id')
-        .eq('email', email)
+    // 1. Check dashboard_access first (direct read model, no RLS recursion risk)
+    try {
+      const { data: da, error: daErr } = await supabase
+        .from('dashboard_access')
+        .select('role, is_active')
+        .eq('auth_user_id', authUserId)
         .maybeSingle();
 
-      if (byEmail && byEmail.is_active && validRoles.includes(byEmail.role)) {
-        if (!byEmail.auth_user_id || byEmail.auth_user_id === authUserId) {
-          await supabase
-            .from('admin_accounts')
-            .update({ auth_user_id: authUserId, last_login: new Date().toISOString() })
-            .eq('id', byEmail.id);
-          return { access: true, role: byEmail.role };
-        }
+      if (!daErr && da && da.is_active && validRoles.includes(da.role)) {
+        return { access: true, role: da.role };
       }
+    } catch {
+      // non-fatal, proceed to next check
     }
 
-    // 3. Fallback to dashboard_access (Read Model)
-    const { data: da } = await supabase
-      .from('dashboard_access')
-      .select('role, is_active')
-      .eq('auth_user_id', authUserId)
-      .maybeSingle();
+    // 2. Check by auth_user_id in admin_accounts (Canonical Identity)
+    try {
+      const { data, error } = await supabase
+        .from('admin_accounts')
+        .select('role, is_active')
+        .eq('auth_user_id', authUserId)
+        .maybeSingle();
 
-    if (da && da.is_active && validRoles.includes(da.role)) {
-      return { access: true, role: da.role };
+      if (!error && data && data.is_active && validRoles.includes(data.role)) {
+        return { access: true, role: data.role };
+      }
+    } catch {
+      // non-fatal
+    }
+
+    // 3. Check by email fallback only if user is active and not bound to a different auth_user_id
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const email = user?.email?.toLowerCase().trim();
+      if (email) {
+        const { data: byEmail, error: emailErr } = await supabase
+          .from('admin_accounts')
+          .select('id, role, is_active, auth_user_id')
+          .eq('email', email)
+          .maybeSingle();
+
+        if (!emailErr && byEmail && byEmail.is_active && validRoles.includes(byEmail.role)) {
+          if (!byEmail.auth_user_id || byEmail.auth_user_id === authUserId) {
+            await supabase
+              .from('admin_accounts')
+              .update({ auth_user_id: authUserId, last_login: new Date().toISOString() })
+              .eq('id', byEmail.id);
+            return { access: true, role: byEmail.role };
+          }
+        }
+      }
+    } catch {
+      // non-fatal
     }
 
     return { access: false };
