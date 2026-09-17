@@ -639,19 +639,24 @@ export default function App() {
         const isMember = window.location.pathname.toLowerCase().startsWith('/member');
         if (!isMember) {
           const adminCheck = await verifyAdminAccess();
-          if (adminCheck.allowed) {
-            const role = (adminCheck.role as UserRole) || 'super_admin';
-            const name = adminCheck.full_name || session.user.email || 'Super Admin';
+          const validAdminRoles: UserRole[] = ['super_admin', 'admin', 'dev'];
+          if (adminCheck.allowed && adminCheck.role && validAdminRoles.includes(adminCheck.role as UserRole)) {
+            const role = adminCheck.role as UserRole;
+            const name = adminCheck.full_name || session.user.email || 'Admin';
             setCurrentUserRole(role);
             setCurrentUserName(name);
             localStorage.setItem('user_role', role);
             localStorage.setItem('user_name', name);
             setAuthenticated(true);
-            showToast(`Login Super Admin Berhasil! (${name})`, 'success');
+            showToast(`Login ${role === 'super_admin' ? 'Super Admin' : 'Admin'} Berhasil! (${name})`, 'success');
           } else {
             await authSignOut();
             setAuthenticated(false);
-            showToast(adminCheck.reason || 'Akses ditolak: Akun ini bukan Super Admin terdaftar.', 'error');
+            setCurrentUserRole('');
+            localStorage.removeItem('user_role');
+            localStorage.removeItem('user_name');
+            localStorage.removeItem('backoffice_access_token');
+            showToast(adminCheck.reason || 'Akses ditolak: Akun ini bukan Super Admin atau Admin yang terdaftar dan aktif di database.', 'error');
           }
         } else {
           // Member path: Supabase Auth identity ≠ business membership.

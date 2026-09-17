@@ -318,17 +318,42 @@ export async function verifyWhatsAppOtp(phone: string, token: string): Promise<{
 
 export async function verifyAdminAccess(): Promise<{ allowed: boolean; role?: string; email?: string; full_name?: string; reason?: string }> {
   try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { allowed: false, reason: 'Sesi tidak valid atau belum login' };
+
+    // 1. First attempt atomic RPC verify_admin_access
     const { data, error } = await supabase.rpc('verify_admin_access');
-    if (error) {
-      console.warn('RPC verify_admin_access error, checking direct table:', error);
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return { allowed: false, reason: 'Belum login' };
-      const { access, role } = await checkUserAdminAccess(user.id);
-      return { allowed: access, role, email: user.email, reason: access ? undefined : 'Akses ditolak' };
+    if (!error && data?.allowed && data.role) {
+      return {
+        allowed: true,
+        role: data.role,
+        email: data.email || user.email,
+        full_name: data.full_name || user.user_metadata?.full_name || user.email?.split('@')[0],
+      };
     }
-    return data || { allowed: false, reason: 'Verifikasi gagal' };
+
+    if (error) {
+      console.warn('RPC verify_admin_access note (checking direct database model):', error);
+    }
+
+    // 2. Direct database model verification (admin_accounts / dashboard_access)
+    const { access, role } = await checkUserAdminAccess(user.id);
+    if (access && role && ['super_admin', 'admin', 'dev'].includes(role)) {
+      return {
+        allowed: true,
+        role,
+        email: user.email,
+        full_name: user.user_metadata?.full_name || user.email?.split('@')[0],
+      };
+    }
+
+    // Fail closed: neither RPC nor direct database confirmed an active admin role
+    return {
+      allowed: false,
+      reason: data?.reason || 'Akses ditolak: Akun Anda bukan Super Admin atau Admin yang terdaftar di database.',
+    };
   } catch (e: any) {
-    return { allowed: false, reason: e.message };
+    return { allowed: false, reason: e.message || 'Gagal memverifikasi izin akses admin.' };
   }
 }
 
@@ -474,30 +499,48 @@ export async function updateNewPassword(newPassword: string): Promise<{ success:
 
 async function checkUserAdminAccess(authUserId: string): Promise<{ access: boolean; role?: string }> {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
-    const email = user?.email?.toLowerCase().trim();
+    const validRoles = ['super_admin', 'admin', 'dev'];
 
-    // 1. Check by auth_user_id
-    const { data, error } = await supabase.from('admin_accounts').select('role, is_active').eq('auth_user_id', authUserId).maybeSingle();
-    if (data && data.is_active) {
+    // 1. Check by auth_user_id in admin_accounts (Canonical Identity)
+    const { data } = await supabase
+      .from('admin_accounts')
+      .select('role, is_active')
+      .eq('auth_user_id', authUserId)
+      .maybeSingle();
+
+    if (data && data.is_active && validRoles.includes(data.role)) {
       return { access: true, role: data.role };
     }
 
-    // 2. Check by email fallback
+    // 2. Check by email fallback only if user is active and not bound to a different auth_user_id
+    const { data: { user } } = await supabase.auth.getUser();
+    const email = user?.email?.toLowerCase().trim();
     if (email) {
-      const { data: byEmail } = await supabase.from('admin_accounts').select('role, is_active').eq('email', email).maybeSingle();
-      if (byEmail && byEmail.is_active) {
-        // Auto-link auth_user_id
-        await supabase.from('admin_accounts')
-          .update({ auth_user_id: authUserId, last_login: new Date().toISOString() })
-          .eq('email', email);
-        return { access: true, role: byEmail.role };
+      const { data: byEmail } = await supabase
+        .from('admin_accounts')
+        .select('id, role, is_active, auth_user_id')
+        .eq('email', email)
+        .maybeSingle();
+
+      if (byEmail && byEmail.is_active && validRoles.includes(byEmail.role)) {
+        if (!byEmail.auth_user_id || byEmail.auth_user_id === authUserId) {
+          await supabase
+            .from('admin_accounts')
+            .update({ auth_user_id: authUserId, last_login: new Date().toISOString() })
+            .eq('id', byEmail.id);
+          return { access: true, role: byEmail.role };
+        }
       }
     }
 
-    // 3. Fallback to dashboard_access
-    const { data: da } = await supabase.from('dashboard_access').select('role, is_active').eq('auth_user_id', authUserId).maybeSingle();
-    if (da && da.is_active) {
+    // 3. Fallback to dashboard_access (Read Model)
+    const { data: da } = await supabase
+      .from('dashboard_access')
+      .select('role, is_active')
+      .eq('auth_user_id', authUserId)
+      .maybeSingle();
+
+    if (da && da.is_active && validRoles.includes(da.role)) {
       return { access: true, role: da.role };
     }
 
@@ -509,19 +552,30 @@ async function checkUserAdminAccess(authUserId: string): Promise<{ access: boole
 
 export async function isSuperAdmin(authUserId: string): Promise<boolean> {
   try {
+    const { data } = await supabase
+      .from('admin_accounts')
+      .select('role, is_active')
+      .eq('auth_user_id', authUserId)
+      .maybeSingle();
+    if (data && data.is_active && data.role === 'super_admin') return true;
+
     const { data: { user } } = await supabase.auth.getUser();
     const email = user?.email?.toLowerCase().trim();
-
-    const { data } = await supabase.from('admin_accounts').select('role').eq('auth_user_id', authUserId).maybeSingle();
-    if (data?.role === 'super_admin') return true;
-
     if (email) {
-      const { data: byEmail } = await supabase.from('admin_accounts').select('role').eq('email', email).maybeSingle();
-      if (byEmail?.role === 'super_admin') return true;
+      const { data: byEmail } = await supabase
+        .from('admin_accounts')
+        .select('role, is_active')
+        .eq('email', email)
+        .maybeSingle();
+      if (byEmail && byEmail.is_active && byEmail.role === 'super_admin') return true;
     }
 
-    const { data: da } = await supabase.from('dashboard_access').select('role').eq('auth_user_id', authUserId).maybeSingle();
-    return da?.role === 'super_admin';
+    const { data: da } = await supabase
+      .from('dashboard_access')
+      .select('role, is_active')
+      .eq('auth_user_id', authUserId)
+      .maybeSingle();
+    return da?.is_active === true && da?.role === 'super_admin';
   } catch {
     return false;
   }
@@ -545,20 +599,33 @@ export async function getCurrentUserRole(): Promise<string | null> {
   try {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return null;
+    const validRoles = ['super_admin', 'admin', 'dev'];
+
+    const { data } = await supabase
+      .from('admin_accounts')
+      .select('role, is_active')
+      .eq('auth_user_id', user.id)
+      .maybeSingle();
+    if (data && data.is_active && validRoles.includes(data.role)) return data.role;
+
     const email = user.email?.toLowerCase().trim();
-
-    const { data } = await supabase.from('admin_accounts').select('role').eq('auth_user_id', user.id).maybeSingle();
-    if (data?.role) return data.role;
-
     if (email) {
-      const { data: byEmail } = await supabase.from('admin_accounts').select('role').eq('email', email).maybeSingle();
-      if (byEmail?.role) return byEmail.role;
+      const { data: byEmail } = await supabase
+        .from('admin_accounts')
+        .select('role, is_active')
+        .eq('email', email)
+        .maybeSingle();
+      if (byEmail && byEmail.is_active && validRoles.includes(byEmail.role)) return byEmail.role;
     }
 
-    const { data: da } = await supabase.from('dashboard_access').select('role').eq('auth_user_id', user.id).maybeSingle();
-    if (da?.role) return da.role;
+    const { data: da } = await supabase
+      .from('dashboard_access')
+      .select('role, is_active')
+      .eq('auth_user_id', user.id)
+      .maybeSingle();
+    if (da && da.is_active && validRoles.includes(da.role)) return da.role;
 
-    return 'member';
+    return null;
   } catch {
     return null;
   }
