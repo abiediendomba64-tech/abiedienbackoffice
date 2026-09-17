@@ -57,11 +57,9 @@ export interface TelegramAuthPayload {
 }
 
 export async function loginWithTelegram(telegramPayload: TelegramAuthPayload): Promise<{ magic_link: string; email: string }> {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  if (!supabaseUrl) throw new Error('Supabase URL not configured');
-
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://pnvnpencatzspkwxspac.supabase.co';
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'ysb_publishable_DuriqtWguYDGW_G0etC7RA_uifeHA3M';
   const functionUrl = `${supabaseUrl}/functions/v1/telegram-auth`;
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
   const response = await fetch(functionUrl, {
     method: 'POST',
@@ -108,9 +106,8 @@ export async function getTelegramNotifications(): Promise<TelegramNotificationRe
 
 // Helper to invoke edge function
 async function invokeBackofficeApi(path: string, payload: any) {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !anonKey) return { error: 'Not configured' };
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://pnvnpencatzspkwxspac.supabase.co';
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'ysb_publishable_DuriqtWguYDGW_G0etC7RA_uifeHA3M';
 
   const session = await supabase.auth.getSession();
   const token = session.data.session?.access_token;
@@ -665,9 +662,8 @@ export interface DomainOrderRequest {
 // No localStorage authority, no mock fallback: empty DB = empty UI.
 
 async function fetchBackoffice<T>(path: string, init?: RequestInit): Promise<T> {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !anonKey) throw new Error('Supabase tidak terkonfigurasi.');
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://pnvnpencatzspkwxspac.supabase.co';
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'ysb_publishable_DuriqtWguYDGW_G0etC7RA_uifeHA3M';
   const session = await supabase.auth.getSession();
   const token = session.data.session?.access_token;
   if (!token) throw new Error('Sesi tidak ditemukan. Login terlebih dahulu.');

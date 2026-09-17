@@ -181,8 +181,9 @@ export async function verifyMagicLink(email: string, token: string): Promise<{ s
 
 export async function loginTelegramWithEmail(telegramPayload: any, email: string): Promise<{ success: boolean; error?: string; role?: string }> {
   try {
-    const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-auth`;
-    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://pnvnpencatzspkwxspac.supabase.co';
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'ysb_publishable_DuriqtWguYDGW_G0etC7RA_uifeHA3M';
+    const functionUrl = `${supabaseUrl}/functions/v1/telegram-auth`;
     const response = await fetch(functionUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}` },
@@ -202,8 +203,8 @@ export async function loginTelegramWithEmail(telegramPayload: any, email: string
 
 export async function verifyTelegramWidgetPayload(payload: any): Promise<{ success: boolean; user?: any; role?: string; error?: string }> {
   try {
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://pnvnpencatzspkwxspac.supabase.co';
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'ysb_publishable_DuriqtWguYDGW_G0etC7RA_uifeHA3M';
     const res = await fetch(`${supabaseUrl}/functions/v1/telegram-auth`, {
       method: 'POST',
       headers: {
