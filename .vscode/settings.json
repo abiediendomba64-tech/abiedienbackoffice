@@ -24,5 +24,8 @@
   "files.associations": {
     "supabase/migrations/*.sql": "postgres",
     "supabase/seeds/**/*": "postgres"
-  }
+  },
+  "eslint.workingDirectories": [
+    { "mode": "auto" }
+  ]
 }

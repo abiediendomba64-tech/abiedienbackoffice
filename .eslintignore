@@ -1,0 +1,4 @@
+vscode-antigravity-cockpit/
+dist/
+node_modules/
+supabase/
