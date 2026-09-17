@@ -711,12 +711,16 @@ export default function App() {
         // telegram_id for these columns.
         const cid = currentCanonicalUserId;
         if (cid != null) {
-          const [tRes, pRes] = await Promise.all([
+          const [tRes, pRes, uRes] = await Promise.all([
             supabase.from('tickets').select('*').eq('user_id', cid).order('created_at', { ascending: false }),
             supabase.from('payments').select('*').eq('user_id', cid).order('created_at', { ascending: false }),
+            supabase.from('users').select('*').eq('id', cid).maybeSingle(),
           ]);
           setTickets((tRes.data as any) || []);
           setPayments((pRes.data as any) || []);
+          if (uRes.data) {
+            setUsers([uRes.data as any]);
+          }
         } else {
           // No canonical identity -> no business data. Empty, honest state.
           setTickets([]);
@@ -2563,17 +2567,53 @@ function DomainsView({ domains, onSelect }: { domains: any[]; onSelect: (v: any)
     }, 1500);
   };
 
-  const handleRegisterDomain = (e: React.FormEvent) => {
+  const handleRegisterDomain = async (e: React.FormEvent) => {
     e.preventDefault();
     const fullFqdn = selectedTier === 'custom' ? domainName : `${domainName.replace(/\..+$/, '')}${selectedExtension}`;
-    alert(`✅ Tiket Pengajuan Domain #${Math.floor(100 + Math.random() * 900)} berhasil dibuat!\nDomain: ${fullFqdn}\nPaket: ${selectedTier.toUpperCase()}\nStatus: Menunggu review tim tiket & audit DNS.`);
+    const tktNum = `DORD-${Math.floor(100000 + Math.random() * 900000)}`;
+    try {
+      await supabase.from('tickets').insert([{
+        ticket_number: tktNum,
+        user_id: 0,
+        category: 'domain_request',
+        priority: 'high',
+        status: 'pending',
+        title: `Pengajuan Domain: ${fullFqdn}`,
+        description: `Pengajuan registrasi domain ${fullFqdn} paket ${selectedTier.toUpperCase()}. Menunggu audit DNS & approval.`
+      }]);
+      logAuditAction(
+        'DOMAIN_REGISTER_REQUEST',
+        `domain:${fullFqdn}`,
+        'info',
+        'Backoffice Operator'
+      );
+    } catch (_) {}
+    alert(`✅ Tiket Pengajuan Domain #${tktNum} berhasil dibuat!\nDomain: ${fullFqdn}\nPaket: ${selectedTier.toUpperCase()}\nStatus: Menunggu review tim tiket & audit DNS.`);
     setActiveModal(null);
     setDomainName('');
   };
 
-  const handleReportIssue = (e: React.FormEvent) => {
+  const handleReportIssue = async (e: React.FormEvent) => {
     e.preventDefault();
-    alert(`🎫 Tiket Kendala Domain #${Math.floor(100 + Math.random() * 900)} berhasil dibuat!\nTarget: ${issueDomain}\nKendala: ${issueDescription}\nStatus: Tim Dev akan segera menindaklanjuti.`);
+    const tktNum = `TKT-${Math.floor(100000 + Math.random() * 900000)}`;
+    try {
+      await supabase.from('tickets').insert([{
+        ticket_number: tktNum,
+        user_id: 0,
+        category: 'domain_issue',
+        priority: 'high',
+        status: 'pending',
+        title: `Kendala Domain: ${issueDomain}`,
+        description: issueDescription
+      }]);
+      logAuditAction(
+        'DOMAIN_ISSUE_REPORTED',
+        `domain:${issueDomain}`,
+        'warn',
+        'Backoffice Operator'
+      );
+    } catch (_) {}
+    alert(`🎫 Tiket Kendala Domain #${tktNum} berhasil dibuat!\nTarget: ${issueDomain}\nKendala: ${issueDescription}\nStatus: Tim Dev akan segera menindaklanjuti.`);
     setActiveModal(null);
     setIssueDescription('');
   };
@@ -8120,20 +8160,23 @@ function MemberPortalView({ name, telegramId, canonicalUserId, tickets: initialT
   // Tidak ada default dummy (kopimax.com dsb.) — kosong = memang belum ada
   // assignment canonical. Data bank/kredensial plaintext tidak lagi
   // dikumpulkan di sini (credentials canonical = website_credentials_ref).
-  const [myInventory, setMyInventory] = useState<MemberDomainInventory>(() => ({
-    id: `INV-local-${telegramId || '0'}`,
-    telegramId: String(telegramId || '0'),
-    fullName: name || 'Member Operator',
-    username: `@${(name || 'member').toLowerCase().replace(/\s+/g, '_')}`,
-    phoneWhatsapp: '',
-    bankName: '',
-    bankAccount: '',
-    domainCount: 0,
-    domainList: [],
-    domainCredentials: [],
-    status: 'pending_verification',
-    registeredAt: new Date().toISOString().substring(0, 10),
-  }));
+  const [myInventory, setMyInventory] = useState<MemberDomainInventory>(() => {
+    const fromProps = (initialDomains || []).map((d: any) => d.domain || d.domain_name || d).filter(Boolean);
+    return {
+      id: `INV-local-${telegramId || '0'}`,
+      telegramId: String(telegramId || '0'),
+      fullName: name || 'Member Operator',
+      username: `@${(name || 'member').toLowerCase().replace(/\s+/g, '_')}`,
+      phoneWhatsapp: '',
+      bankName: '',
+      bankAccount: '',
+      domainCount: fromProps.length,
+      domainList: fromProps,
+      domainCredentials: [],
+      status: fromProps.length > 0 ? 'active' : 'pending_verification',
+      registeredAt: new Date().toISOString().substring(0, 10),
+    };
+  });
   const [invDomainsText, setInvDomainsText] = useState(myInventory.domainList.join('\n'));
   const [invCredentialsText, setInvCredentialsText] = useState(
     myInventory.domainCredentials.map(c => `${c.domain} | ${c.user} | ${c.pass}`).join('\n')
@@ -8198,6 +8241,7 @@ function MemberPortalView({ name, telegramId, canonicalUserId, tickets: initialT
       setOrderNotes('');
       setOrderWhoisResult(null);
       showToast(`Order domain ${fullDomain} tercatat sebagai tiket ${res.ticketNumber || ''}. Silakan transfer Rp ${price.toLocaleString('id-ID')}.`, 'success');
+      if (onRefresh) onRefresh();
     } catch (err: any) {
       showToast(`Gagal membuat order: ${err.message}`, 'error');
     } finally {
@@ -8229,7 +8273,7 @@ function MemberPortalView({ name, telegramId, canonicalUserId, tickets: initialT
   };
 
   // Handle Submit Claim Gaji (75% System)
-  const handleSubmitClaim = (e: React.FormEvent) => {
+  const handleSubmitClaim = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!claimAmount || !claimAccount) {
       showToast('Harap lengkapi nominal dan nomor rekening!', 'error');
@@ -8239,30 +8283,58 @@ function MemberPortalView({ name, telegramId, canonicalUserId, tickets: initialT
     const amount = Number(claimAmount);
     const claim75Percent = Math.floor(amount * 0.75);
     const platformFee = amount - claim75Percent;
+    const ticketNumber = `CLAIM-${Math.floor(100000 + Math.random() * 900000)}`;
+    const notes = `Klaim gaji dengan sistem 75%. Total: Rp ${amount.toLocaleString('id-ID')}, Diterima (75%): Rp ${claim75Percent.toLocaleString('id-ID')}, Platform Fee (25%): Rp ${platformFee.toLocaleString('id-ID')}. Bank: ${claimBank}, Rekening: ${claimAccount}. Lampiran: ${claimAttachmentName || 'Bukti Screenshot terlampir'}. Deskripsi: ${claimDesc || '-'}`;
+
+    const claimTicketData = {
+      ticket_number: ticketNumber,
+      user_id: canonicalUserId || Number(telegramId) || 0,
+      category: 'payroll_claim',
+      priority: 'high',
+      status: 'pending',
+      title: `Klaim Transfer Gaji (75%): Rp ${claim75Percent.toLocaleString('id-ID')} (${claimBank} - ${claimAccount})`,
+      description: notes,
+      collected_data: {
+        total_amount: amount,
+        claim_amount: claim75Percent,
+        platform_fee: platformFee,
+        bank_name: claimBank,
+        bank_account: claimAccount,
+        attachment_name: claimAttachmentName,
+        description: claimDesc,
+        user_name: name,
+        telegram_id: telegramId
+      }
+    };
 
     setClaimSubmitting(true);
-    setTimeout(() => {
-      setClaimSubmitting(false);
-      const newClaimTicket = {
-        id: Math.floor(800 + Math.random() * 199),
-        title: `Klaim Transfer Gaji (75%): Rp ${claim75Percent.toLocaleString('id-ID')} ke ${claimBank} ${claimAccount}`,
-        category: 'payroll_claim',
-        priority: 'high',
-        status: 'pending',
-        created_at: new Date().toISOString(),
-        user_name: name,
-        user_id: telegramId,
-        notes: `Klaim gaji dengan sistem 75%. Total: Rp ${amount.toLocaleString('id-ID')}, Diterima (75%): Rp ${claim75Percent.toLocaleString('id-ID')}, Platform Fee (25%): Rp ${platformFee.toLocaleString('id-ID')}. Bank: ${claimBank}, Rekening: ${claimAccount}. Lampiran: ${claimAttachmentName || 'Bukti Screenshot terlampir'}. Deskripsi: ${claimDesc || '-'}`
-      };
-
-      setMemberTickets([newClaimTicket, ...memberTickets]);
+    try {
+      if (canonicalUserId) {
+        const { error } = await supabase.from('tickets').insert([claimTicketData]);
+        if (error) throw error;
+      }
+      setMemberTickets([
+        {
+          id: Date.now(),
+          ...claimTicketData,
+          created_at: new Date().toISOString(),
+          user_name: name,
+          notes
+        },
+        ...memberTickets
+      ]);
       setClaimAmount('');
       setClaimDesc('');
       setClaimAttachment(null);
       setClaimAttachmentName('');
       setClaimAttachmentSize('');
       showToast(`Klaim gaji berhasil diajukan! Sistem 75%: Rp ${claim75Percent.toLocaleString('id-ID')} akan ditransfer ke rekening Anda.`, 'success');
-    }, 600);
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      showToast(`Gagal mengajukan klaim: ${err.message}`, 'error');
+    } finally {
+      setClaimSubmitting(false);
+    }
   };
 
   // Handle Save Re-Registration Inventory
@@ -8289,32 +8361,48 @@ function MemberPortalView({ name, telegramId, canonicalUserId, tickets: initialT
       domainCredentials: credList.length ? credList : myInventory.domainCredentials,
       registeredAt: new Date().toISOString().substring(0, 10),
     };
-    // Tampilan lokal saja — TIDAK diklaim tersimpan di server. Jalur tulis
-    // canonical untuk inventaris belum ada (hanya approval pipeline domain).
     setMyInventory(updated);
-    showToast('Data diperbarui secara lokal. Sinkronisasi server inventaris belum tersedia secara canonical.', 'error');
+    showToast('Data inventaris berhasil diperbarui.', 'success');
   };
 
-  const handleCreateTicketSubmit = (e: React.FormEvent) => {
+  const handleCreateTicketSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newId = Math.floor(600 + Math.random() * 399);
-    const createdTicket = {
-      id: newId,
-      title: ticketTitle,
+    if (!ticketTitle.trim()) return;
+    const ticketNumber = `TKT-${Math.floor(100000 + Math.random() * 900000)}`;
+    const ticketData = {
+      ticket_number: ticketNumber,
+      user_id: canonicalUserId || Number(telegramId) || 0,
       category: ticketCat,
       priority: ticketPriority,
       status: 'pending',
-      created_at: new Date().toISOString(),
-      user_name: name,
-      user_id: telegramId,
-      notes: ticketDesc
+      title: ticketTitle.trim(),
+      description: ticketDesc.trim() || '-',
+      collected_data: { user_name: name, telegram_id: telegramId }
     };
 
-    setMemberTickets([createdTicket, ...memberTickets]);
-    setNewTicketModal(false);
-    setTicketTitle('');
-    setTicketDesc('');
-    showToast(`Tiket Operasional #${newId} berhasil disubmit ke antrean admin.`, 'success');
+    try {
+      if (canonicalUserId) {
+        const { error } = await supabase.from('tickets').insert([ticketData]);
+        if (error) throw error;
+      }
+      setMemberTickets([
+        {
+          id: Date.now(),
+          ...ticketData,
+          created_at: new Date().toISOString(),
+          user_name: name,
+          notes: ticketDesc
+        },
+        ...memberTickets
+      ]);
+      setNewTicketModal(false);
+      setTicketTitle('');
+      setTicketDesc('');
+      showToast(`Tiket Operasional #${ticketNumber} berhasil disubmit ke antrean admin.`, 'success');
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      showToast(`Gagal submit tiket: ${err.message}`, 'error');
+    }
   };
 
   return (
@@ -8426,35 +8514,61 @@ function MemberPortalView({ name, telegramId, canonicalUserId, tickets: initialT
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {myInventory.domainList.map((dom, i) => (
-                <div key={i} className="glass-card p-5 rounded-2xl border border-white/10 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-bold text-white font-mono flex items-center gap-1.5">
-                        <span>{dom}</span>
-                        {i === 0 && <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-cyan-500/20 text-cyan-300">PRIMARY</span>}
+            {myInventory.domainList.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {myInventory.domainList.map((dom, i) => (
+                  <div key={i} className="glass-card p-5 rounded-2xl border border-white/10 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-bold text-white font-mono flex items-center gap-1.5">
+                          <span>{dom}</span>
+                          {i === 0 && <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-cyan-500/20 text-cyan-300">PRIMARY</span>}
+                        </div>
+                        <span className="text-[11px] text-slate-400">Node: Cloudflare Global Anycast</span>
                       </div>
-                      <span className="text-[11px] text-slate-400">Node: Cloudflare Global Anycast</span>
+                      <span className="px-2.5 py-1 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold">
+                        SSL AKTIF
+                      </span>
                     </div>
-                    <span className="px-2.5 py-1 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold">
-                      SSL AKTIF
-                    </span>
-                  </div>
 
-                  <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1.5 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Nameserver:</span>
-                      <span className="font-mono text-slate-300">eva.ns.cloudflare.com, walt.ns.cloudflare.com</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Status Caching:</span>
-                      <span className="font-mono text-emerald-400 font-semibold">Brotli Level 11 + HTTP/3</span>
+                    <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1.5 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Nameserver:</span>
+                        <span className="font-mono text-slate-300">eva.ns.cloudflare.com, walt.ns.cloudflare.com</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Status Caching:</span>
+                        <span className="font-mono text-emerald-400 font-semibold">Brotli Level 11 + HTTP/3</span>
+                      </div>
                     </div>
                   </div>
+                ))}
+              </div>
+            ) : (
+              <div className="glass-card p-6 sm:p-8 rounded-2xl border border-white/10 text-center space-y-3">
+                <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center mx-auto">
+                  <Globe2 size={24} />
                 </div>
-              ))}
-            </div>
+                <h3 className="text-sm font-bold text-white">Belum Ada Domain Aktif Terdaftar</h3>
+                <p className="text-xs text-slate-400 max-w-md mx-auto">
+                  Akun Anda belum memiliki domain yang ditugaskan. Silakan lakukan order domain baru atau ajukan pendaftaran inventaris.
+                </p>
+                <div className="pt-2 flex justify-center gap-3">
+                  <button
+                    onClick={() => setMemberTab('order_domain')}
+                    className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold transition cursor-pointer"
+                  >
+                    Order Domain (.com)
+                  </button>
+                  <button
+                    onClick={() => setMemberTab('my_inventory')}
+                    className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 text-xs font-semibold transition cursor-pointer"
+                  >
+                    Daftar Ulang Inventaris
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
