@@ -240,7 +240,15 @@ export async function loginWithGoogle(returnPath: string = '/admin/login'): Prom
         },
       },
     });
-    if (error) return { success: false, error: error.message };
+    if (error) {
+      if (error.message?.toLowerCase().includes('provider is not enabled') || (error as any).error_code === 'validation_failed') {
+        return {
+          success: false,
+          error: 'Google Sign-In belum diaktifkan di Supabase Dashboard (Authentication > Providers > Google). Silakan gunakan Email & Password.',
+        };
+      }
+      return { success: false, error: error.message };
+    }
     return { success: true };
   } catch (e: any) {
     return { success: false, error: e.message };
@@ -265,7 +273,15 @@ export async function loginWithWhatsApp(phone: string): Promise<{ success: boole
     const { error } = await supabase.auth.signInWithOtp({
       phone: cleanPhone,
     });
-    if (error) return { success: false, error: error.message };
+    if (error) {
+      if (error.message?.toLowerCase().includes('provider is not enabled') || (error as any).error_code === 'validation_failed' || error.message?.toLowerCase().includes('sms provider')) {
+        return {
+          success: false,
+          error: 'Layanan WhatsApp/SMS OTP belum diaktifkan di Supabase Dashboard (Authentication > Providers > Phone). Silakan login dengan Email & Password.',
+        };
+      }
+      return { success: false, error: error.message };
+    }
     return { success: true };
   } catch (e: any) {
     return { success: false, error: e.message };
