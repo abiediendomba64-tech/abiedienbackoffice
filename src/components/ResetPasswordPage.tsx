@@ -104,10 +104,10 @@ export const ResetPasswordPage: React.FC<ResetPasswordPageProps> = ({ onNavigate
 
               <button
                 type="button"
-                onClick={() => onNavigate('/admin/login')}
+                onClick={() => onNavigate('/superadm')}
                 className="w-full py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-semibold text-xs border border-white/10 flex items-center justify-center gap-2 transition cursor-pointer"
               >
-                <span>Masuk ke Portal Admin</span>
+                <span>Masuk ke Portal Super Admin</span>
               </button>
             </div>
           </div>

@@ -449,13 +449,13 @@ export default function App() {
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
   const [commandInput, setCommandInput] = useState('');
 
-  // Route State for Login Separation: /admin/login vs /member/login vs /reset-password
+  // Route State for Login Separation: /superadm (Admin/Super Admin) vs /member/login (Member/Public) vs /reset-password
   const [currentPath, setCurrentPath] = useState<string>(() => {
     const p = typeof window !== 'undefined' ? window.location.pathname.toLowerCase() : '';
     const hash = typeof window !== 'undefined' ? window.location.hash.toLowerCase() : '';
     if (p.startsWith('/reset-password') || hash.includes('type=recovery')) return '/reset-password';
-    if (p.startsWith('/member')) return '/member/login';
-    return '/admin/login';
+    if (p.startsWith('/superadm') || p.startsWith('/super') || p.startsWith('/admin')) return '/superadm';
+    return '/member/login';
   });
 
   const navigate = (path: string) => {
@@ -608,16 +608,16 @@ export default function App() {
       setAuthenticated(false);
     }
 
-    // Synchronize browser history popstate for /admin/login vs /member/login vs /reset-password
+    // Synchronize browser history popstate for /superadm vs /member/login vs /reset-password
     const handlePopState = () => {
       const p = window.location.pathname.toLowerCase();
       const hash = window.location.hash.toLowerCase();
       if (p.startsWith('/reset-password') || hash.includes('type=recovery')) {
         setCurrentPath('/reset-password');
-      } else if (p.startsWith('/member')) {
-        setCurrentPath('/member/login');
+      } else if (p.startsWith('/superadm') || p.startsWith('/super') || p.startsWith('/admin')) {
+        setCurrentPath('/superadm');
       } else {
-        setCurrentPath('/admin/login');
+        setCurrentPath('/member/login');
       }
     };
     window.addEventListener('popstate', handlePopState);
@@ -636,8 +636,9 @@ export default function App() {
         }
 
         localStorage.setItem('backoffice_access_token', session.access_token);
-        const isMember = window.location.pathname.toLowerCase().startsWith('/member');
-        if (!isMember) {
+        const isSuperPath = window.location.pathname.toLowerCase().startsWith('/super') || 
+                            window.location.pathname.toLowerCase().startsWith('/admin');
+        if (isSuperPath) {
           const adminCheck = await verifyAdminAccess();
           const validAdminRoles: UserRole[] = ['super_admin', 'admin', 'dev'];
           if (adminCheck.allowed && adminCheck.role && validAdminRoles.includes(adminCheck.role as UserRole)) {
@@ -760,7 +761,7 @@ export default function App() {
     if (currentUserRole === 'member') {
       navigate('/member/login');
     } else {
-      navigate('/admin/login');
+      navigate('/superadm');
     }
   };
 
@@ -1017,9 +1018,17 @@ export default function App() {
   }
 
   if (!authenticated) {
-    if (currentPath === '/member/login') {
+    if (currentPath === '/reset-password') {
       return (
-        <MemberLogin
+        <ResetPasswordPage
+          onNavigate={(path) => navigate(path === '/admin/login' ? '/superadm' : path)}
+        />
+      );
+    }
+
+    if (currentPath === '/superadm') {
+      return (
+        <AdminLogin
           onSuccess={(role, name, token) => {
             localStorage.setItem('backoffice_access_token', token);
             localStorage.setItem('user_role', role);
@@ -1027,15 +1036,15 @@ export default function App() {
             setCurrentUserRole(role);
             setCurrentUserName(name);
             setAuthenticated(true);
-            showToast('Selamat datang di Portal Member!', 'success');
+            showToast(`Selamat datang, ${name} (${role})!`, 'success');
           }}
-          onNavigateToAdmin={() => navigate('/admin/login')}
+          onNavigateToMember={() => navigate('/member/login')}
         />
       );
     }
 
     return (
-      <AdminLogin
+      <MemberLogin
         onSuccess={(role, name, token) => {
           localStorage.setItem('backoffice_access_token', token);
           localStorage.setItem('user_role', role);
@@ -1043,9 +1052,9 @@ export default function App() {
           setCurrentUserRole(role);
           setCurrentUserName(name);
           setAuthenticated(true);
-          showToast(`Selamat datang, ${name} (${role})!`, 'success');
+          showToast('Selamat datang di Portal Member!', 'success');
         }}
-        onNavigateToMember={() => navigate('/member/login')}
+        onNavigateToAdmin={() => navigate('/superadm')}
       />
     );
   }

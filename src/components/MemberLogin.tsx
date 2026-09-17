@@ -765,16 +765,6 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
         >
           Kendala Akses? Buka Pemulihan Akun
         </button>
-        <p className="text-[11px] text-slate-500">
-          Staf Backoffice?{' '}
-          <button
-            type="button"
-            onClick={onNavigateToAdmin}
-            className="text-rose-400 hover:text-rose-300 font-bold underline cursor-pointer"
-          >
-            Masuk Portal Super Admin
-          </button>
-        </p>
       </div>
     </div>
   );
