@@ -29,6 +29,7 @@ import {
   registerMember,
   signOut
 } from '../lib/auth';
+import { supabase } from '../lib/supabase';
 import { ForgotPasswordModal } from './ForgotPasswordModal';
 
 interface MemberLoginProps {
@@ -69,6 +70,7 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
     (window as any).onTelegramAuth = async (tgPayload: any) => {
       setLoading(true);
       setErrorMessage(null);
+      setInfoMessage(null);
       try {
         const res = await verifyTelegramWidgetPayload(tgPayload);
         if (!res.success) {
@@ -83,8 +85,30 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
           return;
         }
 
+        // Real session exchange via token_hash
+        if (res.token_hash) {
+          const { data: otpData, error: otpErr } = await supabase.auth.verifyOtp({
+            token_hash: res.token_hash,
+            type: 'magiclink',
+          });
+
+          if (!otpErr && otpData?.session?.access_token) {
+            const name = res.user?.full_name || res.user?.username || `Member (${tgPayload.first_name || 'TG'})`;
+            onSuccess('member', name, otpData.session.access_token);
+            return;
+          }
+        }
+
+        // Direct session verification if already authenticated
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          const name = res.user?.full_name || res.user?.username || `Member (${tgPayload.first_name || 'TG'})`;
+          onSuccess('member', name, session.access_token);
+          return;
+        }
+
         setInfoMessage(
-          'Akun Telegram terverifikasi! Masukkan password akun member Anda atau gunakan link /login dari bot untuk masuk otomatis.'
+          'Akun Telegram terverifikasi! Masukkan password akun member Anda atau gunakan link login instan dari bot.'
         );
       } catch (err: any) {
         setErrorMessage(err.message || 'Gagal verifikasi Telegram');
@@ -111,11 +135,46 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
     };
     window.addEventListener('message', handleMessage);
 
+    // Auto-detect Telegram WebApp environment
+    const tgWebApp = (window as any).Telegram?.WebApp;
+    if (tgWebApp?.initData) {
+      const initData = tgWebApp.initData;
+      const params = new URLSearchParams(initData);
+      const hash = params.get('hash');
+      const userStr = params.get('user');
+      if (hash && userStr) {
+        try {
+          const userObj = JSON.parse(userStr);
+          (window as any).onTelegramAuth?.({ ...userObj, hash, auth_date: params.get('auth_date') });
+        } catch {}
+      }
+    }
+
     return () => {
       delete (window as any).onTelegramAuth;
       window.removeEventListener('message', handleMessage);
     };
   }, [onSuccess]);
+
+  // Mount Telegram Login Widget dynamically
+  useEffect(() => {
+    if (authMode === 'telegram') {
+      const container = document.getElementById('telegram-widget-member-container');
+      if (container) {
+        container.innerHTML = '';
+        const script = document.createElement('script');
+        script.src = 'https://telegram.org/js/telegram-widget.js?22';
+        script.setAttribute('data-telegram-login', 'sandekalabot');
+        script.setAttribute('data-size', 'large');
+        script.setAttribute('data-radius', '12');
+        script.setAttribute('data-request-access', 'write');
+        script.setAttribute('data-userpic', 'false');
+        script.setAttribute('data-onauth', 'onTelegramAuth(user)');
+        script.async = true;
+        container.appendChild(script);
+      }
+    }
+  }, [authMode]);
 
   // 1. Google OAuth
   const handleGoogleLogin = async () => {
@@ -703,6 +762,19 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
                 </button>
 
                 <div className="space-y-3">
+                  {/* Live Telegram 1-Click Login Widget */}
+                  <div className="p-3 bg-black/40 rounded-2xl border border-cyan-500/30 flex flex-col items-center justify-center gap-2">
+                    <span className="text-[11px] font-semibold text-cyan-300">1-Click Login Resmi Telegram:</span>
+                    <div id="telegram-widget-member-container" className="flex items-center justify-center min-h-[44px]" />
+                  </div>
+
+                  <div className="relative flex items-center justify-center my-1">
+                    <div className="border-t border-white/10 w-full" />
+                    <span className="bg-slate-900 px-3 text-[11px] text-slate-400 font-medium tracking-wider uppercase shrink-0">
+                      atau buka bot langsung
+                    </span>
+                  </div>
+
                   <a
                     href="https://t.me/sandekalabot?start=login"
                     target="_blank"

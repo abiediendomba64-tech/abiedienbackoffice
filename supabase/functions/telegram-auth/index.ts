@@ -643,12 +643,31 @@ Deno.serve(async (req: Request) => {
         .maybeSingle();
 
       const role = adminAcc ? adminAcc.role : (memberUser ? 'member' : 'guest');
+      const targetEmail = adminAcc?.email || memberUser?.email;
+      let tokenHash: string | null = null;
+
+      if (targetEmail) {
+        try {
+          const { data: linkData, error: linkErr } = await supabaseAdmin.auth.admin.generateLink({
+            type: 'magiclink',
+            email: targetEmail,
+          });
+          if (!linkErr && linkData?.properties?.hashed_token) {
+            tokenHash = linkData.properties.hashed_token;
+          }
+        } catch (e) {
+          console.warn('generateLink note:', e);
+        }
+      }
+
       return new Response(JSON.stringify({
         success: true,
         valid: true,
         user: adminAcc || memberUser || { telegram_id: tgUserId, role: 'guest' },
         role,
         telegram_id: tgUserId,
+        email: targetEmail,
+        token_hash: tokenHash,
       }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 

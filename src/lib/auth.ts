@@ -201,7 +201,7 @@ export async function loginTelegramWithEmail(telegramPayload: any, email: string
 // TELEGRAM LOGIN WIDGET VERIFICATION
 // ==========================================
 
-export async function verifyTelegramWidgetPayload(payload: any): Promise<{ success: boolean; user?: any; role?: string; error?: string }> {
+export async function verifyTelegramWidgetPayload(payload: any): Promise<{ success: boolean; user?: any; role?: string; token_hash?: string; email?: string; error?: string }> {
   try {
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://pnvnpencatzspkwxspac.supabase.co';
     const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'ysb_publishable_DuriqtWguYDGW_G0etC7RA_uifeHA3M';
@@ -218,7 +218,7 @@ export async function verifyTelegramWidgetPayload(payload: any): Promise<{ succe
     if (!res.ok || !result.valid) {
       return { success: false, error: result.error || 'Verifikasi widget Telegram gagal' };
     }
-    return { success: true, user: result.user, role: result.role };
+    return { success: true, user: result.user, role: result.role, token_hash: result.token_hash, email: result.email };
   } catch (e: any) {
     return { success: false, error: e.message };
   }
