@@ -904,6 +904,18 @@ export default function App() {
     }
   };
 
+  const handleRejectClaim = async (claimId: string) => {
+    const reason = window.prompt('Alasan penolakan klaim (wajib):')?.trim();
+    if (!reason) return;
+    try {
+      await executeAdminAction({ action: 'REJECT_CLAIM', reason, metadata: { claim_id: claimId } });
+      showToast('Klaim ditolak; tidak ada payout/ledger yang dibuat.', 'success');
+      await load();
+    } catch (err: any) {
+      showToast(`Penolakan klaim gagal: ${err.message}`, 'error');
+    }
+  };
+
   const handleSettleClaim = async (claimId: string) => {
     const providerReference = window.prompt('Masukkan referensi transfer bank/provider:')?.trim();
     if (!providerReference) return;
@@ -1550,6 +1562,7 @@ export default function App() {
                       exportCSV={() => showToast('Export CSV berhasil', 'success')} 
                       onSelect={setSelected}
                       onApproveClaim={handleApproveClaim}
+                      onRejectClaim={handleRejectClaim}
                       onSettleClaim={handleSettleClaim}
                     />
                   )}
@@ -3321,7 +3334,7 @@ function TicketsListView({
   );
 }
 
-function PaymentsLedgerView({ payments, claims = [], paymentStart, setPaymentStart, paymentEnd, setPaymentEnd, exportCSV, onSelect, onApproveClaim, onSettleClaim }: any) {
+function PaymentsLedgerView({ payments, claims = [], paymentStart, setPaymentStart, paymentEnd, setPaymentEnd, exportCSV, onSelect, onApproveClaim, onRejectClaim, onSettleClaim }: any) {
   return (
     <div className="space-y-4 animate-fade-in">
       <div className="glass-card p-3 sm:p-4 rounded-2xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
@@ -3355,7 +3368,10 @@ function PaymentsLedgerView({ payments, claims = [], paymentStart, setPaymentSta
                   <div className="text-xs text-emerald-300 font-mono-code mt-1">Payout: IDR {Number(cl.payout_amount || 0).toLocaleString('id-ID')}</div>
                 </div>
                 {['pending','reviewing'].includes(cl.status) ? (
-                  <button onClick={() => onApproveClaim(String(cl.id))} className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold">Approve & Post Payable</button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => onApproveClaim(String(cl.id))} className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold">Approve & Post Payable</button>
+                    <button onClick={() => onRejectClaim(String(cl.id))} className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold">Reject</button>
+                  </div>
                 ) : cl.status === 'approved' ? (
                   <div className="flex items-center gap-2">
                     <StatusBadge status={cl.status} />
