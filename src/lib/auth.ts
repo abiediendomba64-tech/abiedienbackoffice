@@ -307,6 +307,14 @@ export async function bindCurrentAdminToTelegramInitData(): Promise<{ bound: boo
   }
 }
 
+export async function getTelegramBindingStatus(): Promise<{ bound: boolean; auth_user_id?: string; role?: string; canonical_user_id?: number | null; telegram_id?: number | null; email?: string | null; error?: string }> {
+  try {
+    return await telegramBindingRequest('/binding-status', {});
+  } catch (e: any) {
+    return { bound: false, error: e?.message || 'Gagal membaca status binding Telegram.' };
+  }
+}
+
 export async function createTelegramBindChallenge(): Promise<{ created: boolean; deep_link?: string; expires_at?: string; challenge_id?: string; error?: string }> {
   try {
     return await telegramBindingRequest('/bind/challenge', {});
