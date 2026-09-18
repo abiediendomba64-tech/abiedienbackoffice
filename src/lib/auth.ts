@@ -145,17 +145,72 @@ export async function loginAdminWithEmail(
   email: string,
   password: string
 ): Promise<{ success: boolean; user?: any; session?: any; access_token?: string; role?: string; error?: string }> {
-  const base = await loginWithEmail(email, password);
-  if (!base.success) return base;
+  const cleanEmail = email.trim().toLowerCase();
 
-    const { access, role } = await checkUserAdminAccess(base.user.id);
-    if (!access) {
-      await supabase.auth.signOut();
-      return { success: false, error: 'Akses ditolak. Hubungi Super Admin.' };
+  // Prefer the canonical backoffice-api-v3 login path. This avoids making the
+  // browser depend on a direct PostgREST/Auth network path for the initial
+  // credential exchange, while the Edge Function still authenticates against
+  // the same Supabase Auth tenant.
+  try {
+    const apiBase = (import.meta.env.VITE_BACKOFFICE_API_URL || `${supabaseUrl}/functions/v1/backoffice-api-v3`).replace(/\\/$/, '');
+    const response = await fetch(`${apiBase}/login`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'apikey': supabaseAnonKey,
+        'authorization': `Bearer ${supabaseAnonKey}`,
+      },
+      body: JSON.stringify({ email: cleanEmail, password }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (response.ok && payload?.access_token && payload?.refresh_token) {
+      const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+        access_token: payload.access_token,
+        refresh_token: payload.refresh_token,
+      });
+      if (!sessionError && sessionData?.user && sessionData?.session) {
+        return {
+          success: true,
+          user: sessionData.user,
+          session: sessionData.session,
+          access_token: sessionData.session.access_token,
+          role: payload.user?.role || payload.role,
+        };
+      }
     }
 
-    await supabase.from('admin_accounts').update({ last_login: new Date().toISOString() }).eq('auth_user_id', base.user.id);
-    return { ...base, role };
+    // Preserve a useful backend rejection instead of converting it into a
+    // misleading generic "Failed to fetch" message.
+    if (response.status === 401 || response.status === 403) {
+      return {
+        success: false,
+        error: payload?.message || (response.status === 401
+          ? 'Email atau password tidak valid.'
+          : 'Akun tidak memiliki akses ke Backoffice.'),
+      };
+    }
+  } catch (apiError) {
+    console.warn('Backoffice /login unavailable; trying direct Supabase Auth:', apiError);
+  }
+
+  // Fallback for environments where the Edge Function is temporarily unavailable.
+  const base = await loginWithEmail(cleanEmail, password);
+  if (!base.success) {
+    const raw = base.error || 'Login gagal.';
+    const friendly = /failed to fetch|networkerror|load failed/i.test(raw)
+      ? 'Tidak dapat terhubung ke server autentikasi. Periksa koneksi, URL Supabase, atau deployment environment.'
+      : raw;
+    return { success: false, error: friendly };
+  }
+
+  const { access, role } = await checkUserAdminAccess(base.user.id);
+  if (!access) {
+    await supabase.auth.signOut();
+    return { success: false, error: 'Akses ditolak. Hubungi Super Admin.' };
+  }
+
+  return { ...base, role };
 }
 
 // Member email login: Supabase Auth + verify_member_access (RPC, fail-closed)
