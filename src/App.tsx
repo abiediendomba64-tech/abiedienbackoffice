@@ -2500,18 +2500,18 @@ function MembersView({ users: initialUsers, memberQuery, setMemberQuery, onSelec
               </span>
             </div>
             <span className="text-[10px] text-slate-400 block">
-              DNS: {u.domain_verified ? '✅ TXT Terverifikasi' : '⏳ Belum di-ACC'}
+              DNS: {u.domain_verified ? '✅ TXT Terverifikasi' : '⏳ Belum diverifikasi'}
             </span>
           </div>,
           <StatusBadge key={`status-${u.id}`} status={u.status || 'pending'} />,
           <div key={`act-${u.id}`} className="flex items-center gap-1.5">
-            {u.status !== 'active' || !u.domain_verified ? (
+            {u.status !== 'active' ? (
               <button
                 onClick={(e) => handleApproveUser(u.id, e)}
                 className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold transition cursor-pointer shadow-glow-emerald"
-                title="Setujui Akun dan Aktifkan DNS Domain"
+                title="Setujui dan aktifkan akun member"
               >
-                ACC & Aktifkan
+                ACC & Aktifkan Member
               </button>
             ) : (
               <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
