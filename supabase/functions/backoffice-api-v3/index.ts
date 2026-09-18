@@ -781,8 +781,8 @@ Deno.serve(async (req: Request) => {
           return wrap(json({ error: 'forbidden', message: 'Akun privileged tidak dapat diproses sebagai member.' }, 403), req);
         }
         const next = action === 'APPROVE_MEMBER'
-          ? { status: 'active', role: 'member', domain_verified: true }
-          : { status: 'suspended', domain_verified: false };
+          ? { status: 'active', role: 'member' }
+          : { status: 'suspended' };
         const { data: updated, error: updateError } = await db.from('users').update(next)
           .eq('id', userId).select('id,role,status,domain_verified').single();
         if (updateError || !updated) return wrap(json({ error: updateError?.message || 'member_update_failed', message: 'Perubahan member gagal disimpan.' }, 400), req);
