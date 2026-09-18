@@ -409,6 +409,7 @@ export default function App() {
   const [users, setUsers] = useState<User[]>([]); 
   const [tickets, setTickets] = useState<Ticket[]>([]); 
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [claims, setClaims] = useState<any[]>([]);
   const [forumTopics, setForumTopics] = useState<any[]>([]);
   const [loading, setLoading] = useState(true); 
   const [error, setError] = useState(''); 
@@ -728,18 +729,20 @@ export default function App() {
         return;
       }
 
-      const [s, u, t, p, f] = await Promise.all([
+      const [s, u, t, p, f, cl] = await Promise.all([
         api<Stats>('/stats'),
         api<User[]>('/users'),
         api<Ticket[]>('/tickets'),
         api<Payment[]>('/payments'),
-        api<any[]>('/forum-topics').catch(() => [])
+        api<any[]>('/forum-topics').catch(() => []),
+        api<any[]>('/claims').catch(() => [])
       ]); 
       setStats(s); 
       setUsers(u); 
       setTickets(t); 
       setPayments(p); 
       setForumTopics(f);
+      setClaims(cl);
     } catch (e: any) { 
       setError(e?.message || 'Backend belum tersedia'); 
     } finally { 
@@ -886,6 +889,16 @@ export default function App() {
     link.click();
     document.body.removeChild(link);
     showToast('Laporan tiket berhasil diunduh (CSV)', 'success');
+  };
+
+  const handleApproveClaim = async (claimId: string) => {
+    try {
+      await executeAdminAction({ action: 'APPROVE_CLAIM', metadata: { claim_id: claimId } });
+      showToast('Klaim disetujui dan payout tercatat di ledger.', 'success');
+      await load();
+    } catch (err: any) {
+      showToast(`Approval klaim gagal: ${err.message}`, 'error');
+    }
   };
 
   const filteredPayments = useMemo(() => payments.filter(p => {
@@ -1511,12 +1524,14 @@ export default function App() {
                   {webTab === 'payments' && (
                     <PaymentsLedgerView 
                       payments={filteredPayments} 
+                      claims={claims}
                       paymentStart={paymentStart} 
                       setPaymentStart={setPaymentStart} 
                       paymentEnd={paymentEnd} 
                       setPaymentEnd={setPaymentEnd} 
                       exportCSV={() => showToast('Export CSV berhasil', 'success')} 
-                      onSelect={setSelected} 
+                      onSelect={setSelected}
+                      onApproveClaim={handleApproveClaim}
                     />
                   )}
 
@@ -3248,7 +3263,7 @@ function TicketsListView({
   );
 }
 
-function PaymentsLedgerView({ payments, paymentStart, setPaymentStart, paymentEnd, setPaymentEnd, exportCSV, onSelect }: any) {
+function PaymentsLedgerView({ payments, claims = [], paymentStart, setPaymentStart, paymentEnd, setPaymentEnd, exportCSV, onSelect, onApproveClaim }: any) {
   return (
     <div className="space-y-4 animate-fade-in">
       <div className="glass-card p-3 sm:p-4 rounded-2xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
@@ -3263,6 +3278,34 @@ function PaymentsLedgerView({ payments, paymentStart, setPaymentStart, paymentEn
           <span>Export CSV</span>
         </button>
       </div>
+
+      {claims.length > 0 && (
+        <div className="glass-card p-4 rounded-2xl space-y-3 border border-amber-500/20">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-extrabold text-white">Klaim Gaji — Review & Payout</h3>
+              <p className="text-[11px] text-slate-400">Approval memakai transaksi payout + double-entry ledger atomik.</p>
+            </div>
+            <span className="text-xs font-bold text-amber-300">{claims.filter((x:any) => ['pending','reviewing'].includes(x.status)).length} pending</span>
+          </div>
+          <div className="space-y-2">
+            {claims.slice(0,50).map((cl:any) => (
+              <div key={cl.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-black/20 border border-white/5">
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-white">{cl.claim_number || cl.id}</div>
+                  <div className="text-[11px] text-slate-400">{cl.bank || '-'} · {cl.account_number || '-'} · {cl.status}</div>
+                  <div className="text-xs text-emerald-300 font-mono-code mt-1">Payout: IDR {Number(cl.payout_amount || 0).toLocaleString('id-ID')}</div>
+                </div>
+                {['pending','reviewing'].includes(cl.status) ? (
+                  <button onClick={() => onApproveClaim(String(cl.id))} className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold">Approve & Post Ledger</button>
+                ) : (
+                  <StatusBadge status={cl.status} />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <ResponsiveDataList 
         title="Ledger Payroll & Pembayaran" 
