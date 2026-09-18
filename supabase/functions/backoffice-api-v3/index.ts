@@ -794,8 +794,34 @@ Deno.serve(async (req: Request) => {
         return wrap(json({ success: true, data: updated, message: action + ' success' }), req);
       }
 
+      // CLAIM PAYOUT -> atomic claim approval + payout transaction + double-entry ledger.
+      if (action === 'APPROVE_CLAIM') {
+        if (!await can(a, 'payment.manage')) {
+          return wrap(json({ error: 'forbidden', message: 'Anda tidak memiliki izin memproses payout klaim.' }, 403), req);
+        }
+        const claimId = String(b.metadata?.claim_id || b.claim_id || '').trim();
+        if (!claimId) {
+          return wrap(json({ error: 'invalid_input', message: 'claim_id required.' }, 422), req);
+        }
+        try {
+          const { data, error } = await db.rpc('approve_claim_atomic', {
+            p_claim_id: claimId,
+            p_actor_id: a.access.user_id,
+            p_actor_role: a.access.role,
+            p_notes: typeof b.reason === 'string' ? b.reason.trim() : null
+          });
+          if (error) throw error;
+          return wrap(json({ success: true, data, message: 'Klaim disetujui dan payout tercatat secara atomik.' }), req);
+        } catch (err: any) {
+          return wrap(json({ error: err.message || 'claim_approval_failed', message: err.message || 'Approval klaim gagal.' }, 400), req);
+        }
+      }
+
       // VERIFY_PAYMENT / REJECT_PAYMENT -> real payments table mutation + admin notif
       if (action === 'VERIFY_PAYMENT' || action === 'REJECT_PAYMENT') {
+        if (!await can(a, 'payment.manage')) {
+          return wrap(json({ error: 'forbidden', message: 'Anda tidak memiliki izin mengelola pembayaran.' }, 403), req);
+        }
         const paymentId = Number(b.payment_id || b.paymentId);
         if (!paymentId) {
           return wrap(json({ error: 'invalid_input', message: 'payment_id required.' }, 422), req);
