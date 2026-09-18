@@ -2362,7 +2362,7 @@ function MembersView({ users: initialUsers, memberQuery, setMemberQuery, onSelec
     if (!target) return;
     try {
       await executeAdminAction({ action: 'APPROVE_MEMBER', metadata: { user_id: userId } });
-      setLocalUsers(prev => prev.map(u => u.id === userId ? { ...u, status: 'active', domain_verified: true, role: 'member' } : u));
+      setLocalUsers(prev => prev.map(u => u.id === userId ? { ...u, status: 'active', role: 'member' } : u));
       alert(`✅ ACC BERHASIL: Akun ${target.full_name || `@${target.username}`} telah disetujui sebagai Member Aktif.`);
     } catch (err: any) {
       alert(`❌ ACC gagal: ${err?.message || 'Perubahan tidak tersimpan di server.'}`);
@@ -2373,7 +2373,7 @@ function MembersView({ users: initialUsers, memberQuery, setMemberQuery, onSelec
     e.stopPropagation();
     try {
       await executeAdminAction({ action: 'SUSPEND_MEMBER', metadata: { user_id: userId } });
-      setLocalUsers(prev => prev.map(u => u.id === userId ? { ...u, status: 'suspended', domain_verified: false } : u));
+      setLocalUsers(prev => prev.map(u => u.id === userId ? { ...u, status: 'suspended' } : u));
       alert(`⛔ Akun #${userId} telah disuspend.`);
     } catch (err: any) {
       alert(`❌ Suspend gagal: ${err?.message || 'Perubahan tidak tersimpan di server.'}`);
