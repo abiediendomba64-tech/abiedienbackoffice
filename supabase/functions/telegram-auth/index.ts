@@ -557,6 +557,37 @@ const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
   auth: { autoRefreshToken: false, persistSession: false }
 });
 
+function randomBindToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function getBearerUser(req: Request): Promise<{ id: string; email: string | null } | null> {
+  const header = req.headers.get('authorization') || '';
+  if (!header.toLowerCase().startsWith('bearer ')) return null;
+  const token = header.slice(7).trim();
+  if (!token) return null;
+  const { data, error } = await supabaseAdmin.auth.getUser(token);
+  if (error || !data.user) return null;
+  return { id: data.user.id, email: data.user.email || null };
+}
+
+async function getActiveAdminForAuth(authUserId: string): Promise<any | null> {
+  const { data, error } = await supabaseAdmin
+    .from('admin_accounts')
+    .select('id,auth_user_id,email,role,full_name,is_active,telegram_id')
+    .eq('auth_user_id', authUserId)
+    .eq('is_active', true)
+    .maybeSingle();
+  return error ? null : data;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: getCorsHeaders(req) });
@@ -575,6 +606,115 @@ Deno.serve(async (req: Request) => {
 
     const url = new URL(req.url);
     const pathname = url.pathname.replace(/.*\/telegram-auth/, '') || '/';
+
+    // ==========================================
+    // 0.0 PROOF-OF-POSSESSION OPERATOR BINDING
+    // ==========================================
+    if (req.method === 'POST' && (pathname === '/bind' || body.action === 'bind-init-data')) {
+      const authUser = await getBearerUser(req);
+      if (!authUser) {
+        return new Response(JSON.stringify({ bound: false, error: 'Authenticated web session required' }), {
+          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const admin = await getActiveAdminForAuth(authUser.id);
+      if (!admin) {
+        return new Response(JSON.stringify({ bound: false, error: 'Active admin account not found' }), {
+          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const rawInitData = body.initData;
+      if (!rawInitData || typeof rawInitData !== 'string') {
+        return new Response(JSON.stringify({ bound: false, error: 'Missing Telegram WebApp initData' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const { valid, data } = await verifyTelegramInitData(rawInitData, botToken);
+      const tgUserId = data.user?.id;
+      if (!valid || !tgUserId) {
+        return new Response(JSON.stringify({ bound: false, error: 'Invalid or expired Telegram initData' }), {
+          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      try {
+        const { data: bindResult, error: bindError } = await supabaseAdmin.rpc(
+          'bind_admin_operator_identity_atomic',
+          {
+            p_auth_user_id: authUser.id,
+            p_telegram_user_id: Number(tgUserId),
+            p_method: 'init_data',
+            p_challenge_token: null,
+          }
+        );
+        if (bindError) throw bindError;
+
+        return new Response(JSON.stringify({
+          bound: true,
+          method: 'init_data',
+          binding: bindResult,
+          telegram: {
+            id: tgUserId,
+            username: data.user?.username || null,
+            first_name: data.user?.first_name || null,
+          },
+        }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ bound: false, error: e?.message || 'Identity binding failed' }), {
+          status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    if (req.method === 'POST' && (pathname === '/bind/challenge' || body.action === 'create-bind-challenge')) {
+      const authUser = await getBearerUser(req);
+      if (!authUser) {
+        return new Response(JSON.stringify({ created: false, error: 'Authenticated web session required' }), {
+          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const admin = await getActiveAdminForAuth(authUser.id);
+      if (!admin) {
+        return new Response(JSON.stringify({ created: false, error: 'Active admin account not found' }), {
+          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const token = randomBindToken();
+      const tokenHash = await sha256Hex(token);
+      const challengeId = crypto.randomUUID();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+      const { error: challengeError } = await supabaseAdmin
+        .from('telegram_identity_bind_challenges')
+        .insert({ id: challengeId, auth_user_id: authUser.id, token_hash: tokenHash, expires_at: expiresAt });
+
+      if (challengeError) {
+        return new Response(JSON.stringify({ created: false, error: challengeError.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const meRes = await fetch(`${TELEGRAM_API_BASE}/bot${botToken}/getMe`);
+      const meJson = await meRes.json();
+      const botUsername = meJson?.result?.username;
+      if (!botUsername) {
+        return new Response(JSON.stringify({ created: false, error: 'Telegram bot username unavailable' }), {
+          status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      return new Response(JSON.stringify({
+        created: true,
+        expires_at: expiresAt,
+        challenge_id: challengeId,
+        deep_link: `https://t.me/${botUsername}?start=bind_${token}`,
+      }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     // ==========================================
     // 0a. VERIFY MINI APP INIT DATA
@@ -807,6 +947,47 @@ Deno.serve(async (req: Request) => {
       const senderIdStr = String(sender.id);
       const isSuperAdmin = superAdminIds.includes(senderIdStr);
       const senderName = `${sender.first_name || ''} ${sender.last_name || ''}`.trim() || sender.username || `User ${sender.id}`;
+
+      const incomingText = String(message?.text || '').trim();
+      const bindMatch = incomingText.match(/^\\/start(?:@[^\\s]+)?\\s+bind_([a-f0-9]{64})$/i);
+      if (bindMatch) {
+        const tokenHash = await sha256Hex(bindMatch[1]);
+        const { data: challenge } = await supabaseAdmin
+          .from('telegram_identity_bind_challenges')
+          .select('id,auth_user_id,expires_at,consumed_at')
+          .eq('token_hash', tokenHash)
+          .is('consumed_at', null)
+          .gt('expires_at', new Date().toISOString())
+          .maybeSingle();
+
+        if (!challenge) {
+          await sendTelegramMessage(botToken, chatId, '⛔ *Binding Ditolak:* tautan tidak valid, kedaluwarsa, atau sudah digunakan.');
+          return new Response(JSON.stringify({ status: 'bind_invalid' }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+
+        try {
+          const { data: bindResult, error: bindError } = await supabaseAdmin.rpc(
+            'bind_admin_operator_identity_atomic',
+            {
+              p_auth_user_id: challenge.auth_user_id,
+              p_telegram_user_id: Number(sender.id),
+              p_method: 'deep_link',
+              p_challenge_token: bindMatch[1],
+            }
+          );
+          if (bindError) throw bindError;
+
+          await sendTelegramMessage(botToken, chatId,
+            `✅ *Telegram Berhasil Terikat*\\n\\nRole: *${bindResult?.role || 'operator'}*\\nIdentitas operator telah disatukan secara atomic dan diaudit.\\n\\nSilakan buka Dashboard.`,
+            { inline_keyboard: [[{ text: '📱 Buka Dashboard', web_app: { url: 'https://abiedienbackoffice.pages.dev' } }]] }
+          );
+        } catch (e: any) {
+          await sendTelegramMessage(botToken, chatId,
+            `⛔ *Binding Ditolak:* ${e?.message || 'identity_binding_failed'}`
+          );
+        }
+        return new Response(JSON.stringify({ status: 'bind_handled' }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
 
       // Automatically register / update admin_chat_ids and telegram_users for Super Admins
       if (isSuperAdmin) {
