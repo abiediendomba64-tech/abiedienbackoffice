@@ -8292,6 +8292,7 @@ function MemberPortalView({ name, telegramId, canonicalUserId, tickets: initialT
   const [claimAccount, setClaimAccount] = useState('');
   const [claimDesc, setClaimDesc] = useState('');
   const [claimAttachment, setClaimAttachment] = useState<File | null>(null);
+  const [claimAttachmentPreview, setClaimAttachmentPreview] = useState<string>('');
   const [claimAttachmentName, setClaimAttachmentName] = useState<string>('');
   const [claimAttachmentSize, setClaimAttachmentSize] = useState<string>('');
   const [claimSubmitting, setClaimSubmitting] = useState(false);
@@ -8406,6 +8407,9 @@ function MemberPortalView({ name, telegramId, canonicalUserId, tickets: initialT
     setClaimAttachmentSize((file.size / 1024).toFixed(1) + ' KB');
 
     setClaimAttachment(file);
+    const reader = new FileReader();
+    reader.onload = () => setClaimAttachmentPreview(typeof reader.result === 'string' ? reader.result : '');
+    reader.readAsDataURL(file);
     showToast(`File ${file.name} siap diunggah ke storage saat klaim dikirim.`, 'success');
   };
 
@@ -8975,7 +8979,7 @@ function MemberPortalView({ name, telegramId, canonicalUserId, tickets: initialT
 
                 {claimAttachment && (
                   <div className="mt-2 p-2 rounded-xl bg-white/5 border border-white/10 max-h-48 overflow-hidden flex items-center justify-center">
-                    <img src={claimAttachment} alt="Preview Bukti" className="max-h-40 rounded-lg object-contain" />
+                    <img src={claimAttachmentPreview} alt="Preview Bukti" className="max-h-40 rounded-lg object-contain" />
                   </div>
                 )}
               </div>
