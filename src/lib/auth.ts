@@ -263,6 +263,59 @@ export async function verifyTelegramWidgetPayload(payload: any): Promise<{ succe
 }
 
 // ==========================================
+ // TELEGRAM OPERATOR PROOF-OF-POSSESSION BINDING
+ // ==========================================
+
+function telegramAuthFunctionUrl(path: string = ''): string {
+  const base = (
+    import.meta.env.VITE_SUPABASE_URL ||
+    'https://pnvnpencatzspkwxspac.supabase.co'
+  ).replace(/\/$/, '');
+  return `${base}/functions/v1/telegram-auth${path}`;
+}
+
+async function telegramBindingRequest<T>(path: string, body: Record<string, any>): Promise<T> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Sesi login tidak valid.');
+
+  const response = await fetch(telegramAuthFunctionUrl(path), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result?.error || `Binding request gagal (${response.status})`);
+  return result as T;
+}
+
+export function getTelegramWebAppInitData(): string | null {
+  if (typeof window === 'undefined') return null;
+  return (window as any).Telegram?.WebApp?.initData || null;
+}
+
+export async function bindCurrentAdminToTelegramInitData(): Promise<{ bound: boolean; binding?: any; telegram?: any; error?: string }> {
+  try {
+    const initData = getTelegramWebAppInitData();
+    if (!initData) return { bound: false, error: 'Telegram WebApp initData tidak tersedia. Buka Dashboard dari Telegram.' };
+    return await telegramBindingRequest('/bind', { initData });
+  } catch (e: any) {
+    return { bound: false, error: e?.message || 'Binding Telegram gagal.' };
+  }
+}
+
+export async function createTelegramBindChallenge(): Promise<{ created: boolean; deep_link?: string; expires_at?: string; challenge_id?: string; error?: string }> {
+  try {
+    return await telegramBindingRequest('/bind/challenge', {});
+  } catch (e: any) {
+    return { created: false, error: e?.message || 'Gagal membuat challenge Telegram.' };
+  }
+}
+
+// ==========================================
 // GOOGLE OAUTH LOGIN
 // ==========================================
 
