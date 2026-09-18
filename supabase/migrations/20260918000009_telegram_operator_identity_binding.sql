@@ -131,7 +131,7 @@ begin
       raise exception 'auth_identity_already_bound_to_different_telegram';
     end if;
   else
-    if found and v_existing_by_tg.id is not null then
+    if v_existing_by_tg.id is not null then
       v_user := v_existing_by_tg;
     else
       select *
