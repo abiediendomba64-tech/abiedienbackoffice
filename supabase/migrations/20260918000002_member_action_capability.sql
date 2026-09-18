@@ -11,4 +11,4 @@ CROSS JOIN LATERAL (
   WHERE code = 'member.manage'
   LIMIT 1
 ) AS cap
-ON CONFLICT (role, capability_id) DO NOTHING;
+ON CONFLICT (role, capability_code) DO UPDATE SET capability_id = EXCLUDED.capability_id;
