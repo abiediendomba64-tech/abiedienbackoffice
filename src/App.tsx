@@ -108,7 +108,7 @@ import { CloudflareAnalyticsDashboard } from './components/CloudflareAnalyticsDa
 import { AdminLogin } from './components/AdminLogin';
 import { MemberLogin } from './components/MemberLogin';
 import { ResetPasswordPage } from './components/ResetPasswordPage';
-import { verifyAdminAccess, verifyMemberAccess, signOut as authSignOut } from './lib/auth';
+import { verifyAdminAccess, verifyMemberAccess, signOut as authSignOut, getTelegramBindingStatus, bindCurrentAdminToTelegramInitData, createTelegramBindChallenge, getTelegramWebAppInitData } from './lib/auth';
 import { supabase, supabaseUrl, supabaseAnonKey } from './lib/supabase';
 
 declare global {
@@ -445,6 +445,15 @@ export default function App() {
     const raw = localStorage.getItem('user_canonical_id');
     return raw ? Number(raw) : null;
   });
+  const [telegramBinding, setTelegramBinding] = useState<{
+    bound: boolean;
+    canonical_user_id?: number | null;
+    telegram_id?: number | null;
+    role?: string;
+    email?: string | null;
+    error?: string;
+  }>({ bound: false });
+  const [telegramBindingLoading, setTelegramBindingLoading] = useState(false);
   const [domainOrders, setDomainOrders] = useState<DomainOrderRequest[]>([]);
   const [memberInventories, setMemberInventories] = useState<MemberDomainInventory[]>([]);
   const [technicalCases, setTechnicalCases] = useState<TechnicalCase[]>([]);
@@ -694,6 +703,33 @@ export default function App() {
     setToast({ message, type });
     setTimeout(() => setToast(null), 4000);
   };
+
+  const refreshTelegramBinding = async () => {
+    if (!authenticated || !['super_admin', 'admin', 'dev'].includes(currentUserRole)) return;
+    setTelegramBindingLoading(true);
+    try {
+      const status = await getTelegramBindingStatus();
+      setTelegramBinding(status);
+      if (status.bound && status.canonical_user_id != null) {
+        setCurrentCanonicalUserId(status.canonical_user_id);
+        localStorage.setItem('user_canonical_id', String(status.canonical_user_id));
+      }
+      if (status.telegram_id != null) {
+        setCurrentUserTelegramId(String(status.telegram_id));
+        localStorage.setItem('user_tg_id', String(status.telegram_id));
+      }
+    } catch (e: any) {
+      setTelegramBinding({ bound: false, error: e?.message || 'Status binding tidak dapat dibaca.' });
+    } finally {
+      setTelegramBindingLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (authenticated && ['super_admin', 'admin', 'dev'].includes(currentUserRole)) {
+      void refreshTelegramBinding();
+    }
+  }, [authenticated, currentUserRole]);
 
   const load = async () => { 
     setLoading(true); 
@@ -1488,6 +1524,13 @@ export default function App() {
               {workspace === 'web_apps' && (
                 <>
                   {webTab === 'overview' && (
+                    <TelegramBindingCard
+                      role={currentUserRole}
+                      binding={telegramBinding}
+                      loading={telegramBindingLoading}
+                      onBindingComplete={() => { void refreshTelegramBinding(); }}
+                      onToast={showToast}
+                    />
                     <OverviewView 
                       stats={stats} 
                       users={users} 
@@ -1677,7 +1720,9 @@ export default function App() {
           <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm animate-fade-in" onClick={() => setSelected(null)} />
           <DetailDrawer 
             data={selected} 
-            close={() => setSelected(null)} 
+            close={() => setSelected(null)}
+            isTelegramBound={telegramBinding.bound}
+
             onMutateSuccess={(msg) => { showToast(msg, 'success'); load(); }}
           />
         </>
@@ -1765,6 +1810,119 @@ export default function App() {
 // ==========================================
 // SUB-VIEWS: WEB APPS
 // ==========================================
+
+function TelegramBindingCard({
+  role,
+  binding,
+  loading,
+  onBindingComplete,
+  onToast,
+}: {
+  role: UserRole;
+  binding: { bound: boolean; canonical_user_id?: number | null; telegram_id?: number | null; role?: string; email?: string | null; error?: string };
+  loading: boolean;
+  onBindingComplete: () => void;
+  onToast: (message: string, type?: 'success' | 'error') => void;
+}) {
+  const [working, setWorking] = useState(false);
+  const [deepLink, setDeepLink] = useState<string | null>(null);
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
+  const isMiniApp = Boolean(getTelegramWebAppInitData());
+
+  useEffect(() => {
+    if (!expiresAt) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [expiresAt]);
+
+  useEffect(() => {
+    if (!deepLink) return;
+    const poll = window.setInterval(() => onBindingComplete(), 3000);
+    return () => window.clearInterval(poll);
+  }, [deepLink, onBindingComplete]);
+
+  if (!['super_admin', 'admin', 'dev'].includes(role) || binding.bound) {
+    return binding.bound ? (
+      <div className="p-3 sm:p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-xl bg-emerald-500/15 flex items-center justify-center shrink-0"><ShieldCheck size={18} className="text-emerald-400" /></div>
+          <div className="min-w-0">
+            <div className="text-xs font-black text-emerald-200">Telegram Terhubung</div>
+            <div className="text-[11px] text-emerald-300/70 truncate">Canonical User #{binding.canonical_user_id ?? '-'} · Telegram ID {binding.telegram_id ?? '-'}</div>
+          </div>
+        </div>
+        <span className="text-[10px] font-bold text-emerald-300 shrink-0">IDENTITY VERIFIED</span>
+      </div>
+    ) : null;
+  }
+
+  const secondsLeft = expiresAt ? Math.max(0, Math.ceil((new Date(expiresAt).getTime() - now) / 1000)) : 0;
+  const challengeExpired = deepLink && secondsLeft <= 0;
+
+  const handleMiniAppBind = async () => {
+    setWorking(true);
+    try {
+      const result = await bindCurrentAdminToTelegramInitData();
+      if (!result.bound) throw new Error(result.error || 'Binding Telegram gagal.');
+      setDeepLink(null);
+      onToast('Identitas Telegram berhasil dihubungkan secara sah.', 'success');
+      onBindingComplete();
+    } catch (e: any) {
+      onToast(e?.message || 'Binding Telegram gagal.', 'error');
+    } finally { setWorking(false); }
+  };
+
+  const handleChallenge = async () => {
+    setWorking(true);
+    try {
+      const result = await createTelegramBindChallenge();
+      if (!result.created || !result.deep_link) throw new Error(result.error || 'Gagal membuat challenge Telegram.');
+      setDeepLink(result.deep_link);
+      setExpiresAt(result.expires_at || new Date(Date.now() + 600000).toISOString());
+      window.open(result.deep_link, '_blank', 'noopener,noreferrer');
+      onToast('Tautan verifikasi Telegram dibuat. Selesaikan verifikasi sebelum token kedaluwarsa.', 'success');
+    } catch (e: any) {
+      onToast(e?.message || 'Gagal membuat challenge Telegram.', 'error');
+    } finally { setWorking(false); }
+  };
+
+  return (
+    <div className="p-4 sm:p-5 rounded-2xl bg-amber-950/40 border border-amber-500/30 shadow-glow-amber">
+      <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+        <div className="flex items-start gap-3 min-w-0">
+          <div className="p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/20 shrink-0"><ShieldAlert size={20} className="text-amber-300" /></div>
+          <div className="min-w-0">
+            <h3 className="text-sm sm:text-base font-black text-amber-100">Akun {role === 'super_admin' ? 'Super Admin' : 'Operator'} belum terikat ke Telegram</h3>
+            <p className="text-[11px] sm:text-xs text-amber-200/70 mt-1 max-w-2xl">Fitur verifikasi pembayaran & tindakan finansial dikunci sampai kepemilikan akun Telegram dibuktikan melalui Mini App initData atau one-time deep link.</p>
+          </div>
+        </div>
+
+        {isMiniApp ? (
+          <button type="button" onClick={handleMiniAppBind} disabled={working || loading} className="w-full lg:w-auto shrink-0 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-2 transition">
+            <Smartphone size={15} />
+            {working ? 'Memverifikasi...' : 'Hubungkan Telegram Sekarang'}
+          </button>
+        ) : !deepLink || challengeExpired ? (
+          <button type="button" onClick={handleChallenge} disabled={working || loading} className="w-full lg:w-auto shrink-0 px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-2 transition">
+            <Bot size={15} />
+            {working ? 'Menyiapkan...' : 'Hubungkan Telegram'}
+          </button>
+        ) : (
+          <div className="w-full lg:max-w-xl rounded-xl bg-black/30 border border-white/10 p-3 space-y-2">
+            <div className="text-[11px] text-slate-300">Buka tautan berikut dari Telegram menggunakan akun yang ingin diikat:</div>
+            <a href={deepLink} target="_blank" rel="noreferrer" className="text-xs text-blue-300 hover:text-blue-200 underline break-all">{deepLink}</a>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-white/10 text-[10px] text-slate-400">
+              <span>Token berlaku {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}</span>
+              <button type="button" onClick={onBindingComplete} className="text-cyan-300 hover:underline font-bold">Saya sudah verifikasi — refresh</button>
+            </div>
+          </div>
+        )}
+      </div>
+      {binding.error && !binding.bound && <div className="mt-3 text-[10px] text-rose-300">Status binding: {binding.error}</div>}
+    </div>
+  );
+}
 
 function OverviewView({ 
   stats, 
@@ -6369,7 +6527,7 @@ function TelegramBotSimulator() {
 // ==========================================
 // RESPONSIVE DETAIL DRAWER (Category-Aware Action Inspector)
 // ==========================================
-function DetailDrawer({ data, close, onMutateSuccess }: { data: any; close: () => void; onMutateSuccess: (msg: string) => void }) {
+function DetailDrawer({ data, close, onMutateSuccess, isTelegramBound }: { data: any; close: () => void; onMutateSuccess: (msg: string) => void; isTelegramBound: boolean }) {
   const [replyMessage, setReplyMessage] = useState('');
   const [resolutionNotes, setResolutionNotes] = useState('');
   const [busy, setBusy] = useState(false);
@@ -7024,6 +7182,11 @@ function DetailDrawer({ data, close, onMutateSuccess }: { data: any; close: () =
               </span>
             </div>
 
+            {!isTelegramBound && data.status !== 'verified' && (
+              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-200 text-[11px] font-semibold">
+                🔒 Wajib menghubungkan Telegram terlebih dahulu. Verifikasi dan penolakan pembayaran dikunci sampai identitas operator terikat.
+              </div>
+            )}
             {data.status !== 'verified' ? (
               <div className="space-y-2">
                 <button 
