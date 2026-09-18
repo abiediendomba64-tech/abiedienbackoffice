@@ -889,43 +889,86 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      // VERIFY_PAYMENT / REJECT_PAYMENT -> real payments table mutation + admin notif
+      // VERIFY_PAYMENT / REJECT_PAYMENT -> atomic database RPC.
+      // The RPC receives the authenticated Supabase UUID and resolves the
+      // canonical operator role + public.users identity internally.
       if (action === 'VERIFY_PAYMENT' || action === 'REJECT_PAYMENT') {
         if (!await can(a, 'payment.manage')) {
-          return wrap(json({ error: 'forbidden', message: 'Anda tidak memiliki izin mengelola pembayaran.' }, 403), req);
+          return wrap(json({
+            error: 'forbidden',
+            message: 'Anda tidak memiliki izin mengelola pembayaran.'
+          }, 403), req);
         }
+
         const paymentId = Number(b.payment_id || b.paymentId);
-        if (!paymentId) {
-          return wrap(json({ error: 'invalid_input', message: 'payment_id required.' }, 422), req);
+        if (!Number.isInteger(paymentId) || paymentId <= 0) {
+          return wrap(json({
+            error: 'invalid_input',
+            message: 'payment_id required.'
+          }, 422), req);
         }
-        const toStatus = action === 'VERIFY_PAYMENT' ? 'verified' : 'rejected';
+
+        const actorAuthUserId = a.authUser?.id;
+        if (!actorAuthUserId) {
+          return wrap(json({
+            error: 'unauthorized',
+            message: 'Authenticated actor ID tidak tersedia.'
+          }, 401), req);
+        }
+
         try {
-          const { data, error } = await db.from('payments')
-            .update({ status: toStatus, verified_at: new Date().toISOString(), verified_by: a.access.user_id })
-            .eq('id', paymentId)
-            .select('id,payment_number,user_id,amount,currency,status')
-            .single();
-          if (error) throw error;
-          try {
-            const { data: chatRows } = await db.from('admin_chat_ids').select('chat_id').eq('is_active', true).limit(1);
-            const chatId = chatRows && chatRows[0]?.chat_id;
-            if (chatId && BOT_TOKEN) {
-              await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  chat_id: chatId,
-                  text: `${toStatus === 'verified' ? '✅' : '⛔'} [PAYROLL ${toStatus.toUpperCase()}] Pembayaran #${data.payment_number || paymentId} senilai ${data.currency} ${Number(data.amount || 0).toLocaleString('id-ID')} diverifikasi oleh operator #${a.access.user_id}.`,
-                  parse_mode: 'Markdown'
-                })
-              });
+          let rpcResponse;
+
+          if (action === 'VERIFY_PAYMENT') {
+            const { data, error } = await db.rpc('verify_payment_slip_atomic', {
+              p_payment_id: paymentId,
+              p_actor_auth_user_id: actorAuthUserId
+            });
+            if (error) throw error;
+            rpcResponse = data;
+          } else {
+            const reason = String(
+              b.reason || b.rejection_reason || b.verification_notes || ''
+            ).trim();
+
+            if (!reason) {
+              return wrap(json({
+                error: 'invalid_input',
+                message: 'Alasan penolakan (reason) wajib diisi.'
+              }, 422), req);
             }
-          } catch (dispatchErr) {
-            console.warn('Payment notify dispatch warning:', dispatchErr);
+
+            const { data, error } = await db.rpc('reject_payment_slip_atomic', {
+              p_payment_id: paymentId,
+              p_actor_auth_user_id: actorAuthUserId,
+              p_reason: reason
+            });
+            if (error) throw error;
+            rpcResponse = data;
           }
-          return wrap(json({ success: true, data, message: `${action} success` }), req);
+
+          return wrap(json({
+            success: true,
+            data: rpcResponse,
+            message: \`\${action} success\`
+          }), req);
         } catch (err: any) {
-          return wrap(json({ error: err.message || 'payment_update_failed', message: err.message || 'Payment update failed.' }, 400), req);
+          console.error(\`[\${action}] Error:\`, err);
+          const message = err?.message || 'Gagal memproses pembayaran.';
+          const status = String(message).startsWith('UNAUTHORIZED_ACTOR:')
+            ? 403
+            : String(message).startsWith('FORBIDDEN_ROLE:')
+              ? 403
+              : String(message).startsWith('PAYMENT_NOT_FOUND:')
+                ? 404
+                : String(message).startsWith('INVALID_STATE:')
+                  ? 409
+                  : 400;
+
+          return wrap(json({
+            error: err?.code || 'payment_action_failed',
+            message
+          }, status), req);
         }
       }
 
