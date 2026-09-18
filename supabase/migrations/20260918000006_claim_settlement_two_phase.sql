@@ -276,7 +276,7 @@ BEGIN
   );
 
   UPDATE public.claims
-  SET status='approved'
+  SET status='settled', updated_at=NOW()
   WHERE id=p_claim_id;
 
   UPDATE public.payment_transactions
