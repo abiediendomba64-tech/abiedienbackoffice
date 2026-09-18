@@ -765,6 +765,35 @@ Deno.serve(async (req: Request) => {
         }
       }
 
+      // MEMBER ACCESS ACTIONS -> canonical public.users mutation + audit.
+      if (action === 'APPROVE_MEMBER' || action === 'SUSPEND_MEMBER') {
+        if (!await can(a, 'member.manage')) {
+          return wrap(json({ error: 'forbidden', message: 'Anda tidak memiliki izin mengelola member.' }, 403), req);
+        }
+        const userId = Number(b.metadata?.user_id || b.user_id);
+        if (!Number.isSafeInteger(userId) || userId <= 0) {
+          return wrap(json({ error: 'invalid_input', message: 'user_id wajib valid.' }, 422), req);
+        }
+        const { data: target, error: targetError } = await db.from('users')
+          .select('id,role,status,domain_verified').eq('id', userId).maybeSingle();
+        if (targetError || !target) return wrap(json({ error: 'not_found', message: 'Member tidak ditemukan.' }, 404), req);
+        if (target.role === 'root' || target.role === 'super_admin') {
+          return wrap(json({ error: 'forbidden', message: 'Akun privileged tidak dapat diproses sebagai member.' }, 403), req);
+        }
+        const next = action === 'APPROVE_MEMBER'
+          ? { status: 'active', role: 'member', domain_verified: true }
+          : { status: 'suspended', domain_verified: false };
+        const { data: updated, error: updateError } = await db.from('users').update(next)
+          .eq('id', userId).select('id,role,status,domain_verified').single();
+        if (updateError || !updated) return wrap(json({ error: updateError?.message || 'member_update_failed', message: 'Perubahan member gagal disimpan.' }, 400), req);
+        await db.from('audit_logs').insert({
+          actor_id: a.access.user_id, actor_role: a.access.role, action_type: action,
+          resource_type: 'users', resource_id: userId, old_value: target, new_value: updated,
+          reason: typeof b.reason === 'string' ? b.reason : null
+        });
+        return wrap(json({ success: true, data: updated, message: action + ' success' }), req);
+      }
+
       // VERIFY_PAYMENT / REJECT_PAYMENT -> real payments table mutation + admin notif
       if (action === 'VERIFY_PAYMENT' || action === 'REJECT_PAYMENT') {
         const paymentId = Number(b.payment_id || b.paymentId);
