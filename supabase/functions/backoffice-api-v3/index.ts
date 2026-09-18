@@ -477,6 +477,41 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // ============ MEMBER ONBOARDING REVIEW ============
+    if (p === '/onboarding-requests' && req.method === 'GET') {
+      if (!await can(a, 'member.manage')) return wrap(json({ error: 'forbidden' }, 403), req);
+      const { data, error } = await db.from('member_onboarding_requests').select('*').order('created_at', { ascending: false }).limit(200);
+      if (error) return wrap(json({ error: error.message }, 400), req);
+      return wrap(json(data || []), req);
+    }
+
+    if (p === '/admin/onboarding/decision' && req.method === 'POST') {
+      if (!await can(a, 'member.manage')) return wrap(json({ error: 'forbidden' }, 403), req);
+      const b = await req.json();
+      const requestId = Number(b.request_id);
+      const decision = typeof b.decision === 'string' ? b.decision.toUpperCase() : '';
+      const reason = typeof b.rejection_reason === 'string' ? b.rejection_reason.trim() : '';
+      if (!Number.isInteger(requestId) || requestId <= 0 || !['APPROVED','REJECTED'].includes(decision)) {
+        return wrap(json({ error: 'invalid_input', message: 'request_id dan decision tidak valid.' }, 422), req);
+      }
+      if (decision === 'REJECTED' && !reason) {
+        return wrap(json({ error: 'invalid_input', message: 'Alasan penolakan wajib diisi.' }, 422), req);
+      }
+      try {
+        const { data, error } = await db.rpc('review_member_onboarding_atomic', {
+          p_request_id: requestId,
+          p_decision: decision,
+          p_actor_id: a.access.user_id,
+          p_actor_role: a.access.role,
+          p_rejection_reason: reason || null
+        });
+        if (error) throw error;
+        return wrap(json(data || { success: true }), req);
+      } catch (err: any) {
+        return wrap(json({ error: err.message || 'onboarding_review_failed', message: err.message || 'Keputusan onboarding gagal.' }, 409), req);
+      }
+    }
+
     // ============ TICKET CREATION (member + staff) ============
     // Real ticket creation path for member pages (Kendala / Update requests).
     // Gated by ticket.create (granted to member, admin, super_admin in migration 004).
