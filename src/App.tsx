@@ -7080,7 +7080,8 @@ function DetailDrawer({ data, close, onMutateSuccess, isTelegramBound }: { data:
                 <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-300 block">💳 Verifikasi Tiket Billing</span>
                 <div className="grid grid-cols-2 gap-2">
                   <button
-                    disabled={busy}
+                    disabled={busy || !isTelegramBound}
+                    title={!isTelegramBound ? 'Wajib menghubungkan Telegram terlebih dahulu.' : undefined}
                     onClick={() => openConfirm(
                       'Verifikasi Pembayaran Tiket',
                       `Setujui dan verifikasi mutasi pembayaran pada tiket #${data.ticket_number}?`,
@@ -7098,7 +7099,8 @@ function DetailDrawer({ data, close, onMutateSuccess, isTelegramBound }: { data:
                   </button>
 
                   <button
-                    disabled={busy}
+                    disabled={busy || !isTelegramBound}
+                    title={!isTelegramBound ? 'Wajib menghubungkan Telegram terlebih dahulu.' : undefined}
                     onClick={() => openConfirm(
                       'Tolak Pembayaran Tiket',
                       `Tolak bukti pembayaran pada tiket #${data.ticket_number}?`,
@@ -7190,7 +7192,8 @@ function DetailDrawer({ data, close, onMutateSuccess, isTelegramBound }: { data:
             {data.status !== 'verified' ? (
               <div className="space-y-2">
                 <button 
-                  disabled={busy} 
+                  disabled={busy || !isTelegramBound} 
+                  title={!isTelegramBound ? 'Wajib menghubungkan Telegram terlebih dahulu.' : undefined}
                   onClick={() => openConfirm(
                     'Verifikasi Pembayaran',
                     `Verifikasi pembayaran nomor #${data.payment_number || data.id} senilai ${data.currency || 'IDR'} ${Number(data.amount).toLocaleString('id-ID')}?`,
@@ -7208,7 +7211,8 @@ function DetailDrawer({ data, close, onMutateSuccess, isTelegramBound }: { data:
                 </button>
 
                 <button 
-                  disabled={busy} 
+                  disabled={busy || !isTelegramBound} 
+                  title={!isTelegramBound ? 'Wajib menghubungkan Telegram terlebih dahulu.' : undefined}
                   onClick={() => openConfirm(
                     'Tolak Pembayaran',
                     `Tolak bukti pembayaran nomor #${data.payment_number || data.id}?`,
