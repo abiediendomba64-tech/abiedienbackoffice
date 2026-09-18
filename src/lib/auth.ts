@@ -15,63 +15,94 @@ export interface AdminAccount {
   is_active: boolean;
 }
 
-// Create new admin account (Super Admin only)
-//
-// SECURITY BOUNDARY: creating, updating, or deleting Supabase Auth users
-// requires the service_role key. Browsers only have the anon key, so these
-// operations must be performed by a server-side Edge Function. These helpers
-// fail closed with an explicit server-required error instead of calling the
-// unavailable admin API (and they never confuse admin_accounts.id with
-// auth.users.id).
-export async function createAdminAccount(
-  _creatorTelegramId: number,
-  _email: string,
-  _password: string,
-  _role: 'dev' | 'admin',
-  _fullName: string,
-  _telegramId?: number
-): Promise<{ success: boolean; error?: string }> {
-  return {
-    success: false,
-    error: 'Operasi ini hanya tersedia melalui server Edge Function (service_role).',
-  };
+// Server-side admin account management.
+// The browser never receives service_role. All privileged mutations go through
+// backoffice-api-v3 with the real Supabase Auth access token.
+async function adminApi<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error('Sesi login tidak valid.');
+
+  const base = (
+    import.meta.env.VITE_BACKOFFICE_API_URL ||
+    `${import.meta.env.VITE_SUPABASE_URL || 'https://pnvnpencatzspkwxspac.supabase.co'}/functions/v1/backoffice-api-v3`
+  ).replace(/\\/$/, '');
+
+  const response = await fetch(`${base}${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      ...(init.headers || {}),
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body?.message || body?.error || `Request gagal (${response.status})`);
+  return body as T;
 }
 
-// Update admin account (Super Admin only)
+export async function createAdminAccount(
+  _creatorTelegramId: number,
+  email: string,
+  password: string,
+  role: 'dev' | 'admin',
+  fullName: string,
+  telegramId?: number
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await adminApi('/admin/users/create', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, role, fullName, telegramId }),
+    });
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e?.message || 'Gagal membuat akun admin.' };
+  }
+}
+
 export async function updateAdminAccount(
   adminId: string,
   updates: { email?: string; role?: string; full_name?: string; telegram_id?: number; is_active?: boolean }
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { error } = await supabase.from('admin_accounts').update({ ...updates, updated_at: new Date().toISOString() }).eq('id', adminId);
-    if (error) return { success: false, error: error.message };
+    await adminApi('/admin/users/update', {
+      method: 'PUT',
+      body: JSON.stringify({ adminId, updates }),
+    });
     return { success: true };
   } catch (e: any) {
-    return { success: false, error: e.message };
+    return { success: false, error: e?.message || 'Gagal memperbarui akun admin.' };
   }
 }
 
-// Reset admin password (Super Admin only)
-//
-// Server-only: resetting another user's Auth password requires service_role.
-// The browser helper fails closed so the UI cannot imply success. It also
-// accepts only the Auth user id (never admin_accounts.id) to avoid id mixing.
-export async function resetAdminPassword(_authUserId: string, _newPassword: string): Promise<{ success: boolean; error?: string }> {
-  return {
-    success: false,
-    error: 'Reset password admin hanya tersedia melalui server Edge Function (service_role).',
-  };
+export async function resetAdminPassword(
+  adminId: string,
+  newPassword: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await adminApi('/admin/users/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ adminId, newPassword }),
+    });
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e?.message || 'Gagal mereset password admin.' };
+  }
 }
 
-// Delete admin account (Super Admin only)
-//
-// Server-only for the same reason. Accepts only the Auth user id; deleting
-// the admin_accounts row must happen server-side in one transaction.
-export async function deleteAdminAccount(_authUserId: string): Promise<{ success: boolean; error?: string }> {
-  return {
-    success: false,
-    error: 'Hapus akun admin hanya tersedia melalui server Edge Function (service_role).',
-  };
+export async function deleteAdminAccount(
+  adminId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await adminApi('/admin/users/delete', {
+      method: 'DELETE',
+      body: JSON.stringify({ adminId }),
+    });
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e?.message || 'Gagal menghapus akun admin.' };
+  }
 }
 
 // Get all admin accounts (Super Admin only)
