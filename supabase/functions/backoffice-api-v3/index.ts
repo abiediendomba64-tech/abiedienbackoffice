@@ -837,6 +837,34 @@ Deno.serve(async (req: Request) => {
         }
       }
 
+      // CLAIM PAYOUT SETTLEMENT -> bank/provider confirmation is a separate phase.
+      // Approval never reduces the bank account and never reports a transfer as completed.
+      if (action === 'SETTLE_CLAIM') {
+        if (!await can(a, 'payment.manage')) {
+          return wrap(json({ error: 'forbidden', message: 'Anda tidak memiliki izin menyelesaikan payout klaim.' }, 403), req);
+        }
+        const claimId = String(b.metadata?.claim_id || b.claim_id || '').trim();
+        const providerReference = typeof b.metadata?.provider_reference === 'string'
+          ? b.metadata.provider_reference.trim()
+          : (typeof b.provider_reference === 'string' ? b.provider_reference.trim() : '');
+        if (!claimId || !providerReference) {
+          return wrap(json({ error: 'invalid_input', message: 'claim_id dan provider_reference wajib diisi.' }, 422), req);
+        }
+        try {
+          const { data, error } = await db.rpc('settle_claim_payout_atomic', {
+            p_claim_id: claimId,
+            p_actor_id: a.access.user_id,
+            p_actor_role: a.access.role,
+            p_provider_reference: providerReference,
+            p_notes: typeof b.reason === 'string' ? b.reason.trim() : null
+          });
+          if (error) throw error;
+          return wrap(json({ success: true, data, message: 'Payout ditandai settled berdasarkan referensi transfer.' }), req);
+        } catch (err: any) {
+          return wrap(json({ error: err.message || 'claim_settlement_failed', message: err.message || 'Settlement payout gagal.' }, 400), req);
+        }
+      }
+
       // VERIFY_PAYMENT / REJECT_PAYMENT -> real payments table mutation + admin notif
       if (action === 'VERIFY_PAYMENT' || action === 'REJECT_PAYMENT') {
         if (!await can(a, 'payment.manage')) {
