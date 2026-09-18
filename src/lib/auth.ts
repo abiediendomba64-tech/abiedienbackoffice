@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, supabaseAnonKey, supabaseUrl } from './supabase';
 
 // ==========================================
 // ADMIN ACCOUNT MANAGEMENT (Super Admin only)
