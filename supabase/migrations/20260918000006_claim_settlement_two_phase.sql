@@ -46,6 +46,10 @@ BEGIN
     RAISE EXCEPTION 'Claim % not found', p_claim_id;
   END IF;
 
+  IF v_claim.user_id = p_actor_id THEN
+    RAISE EXCEPTION 'Self-disbursement is prohibited for claim %', p_claim_id;
+  END IF;
+
   IF v_claim.status = 'approved' THEN
     SELECT * INTO v_existing_tx
     FROM public.payment_transactions
@@ -214,6 +218,9 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Claim % not found',p_claim_id;
   END IF;
+  IF v_claim.user_id = p_actor_id THEN
+    RAISE EXCEPTION 'Self-disbursement is prohibited for claim %', p_claim_id;
+  END IF;
   IF v_claim.status <> 'approved' THEN
     RAISE EXCEPTION 'Claim % must be approved before settlement; current status %',p_claim_id,v_claim.status;
   END IF;
@@ -268,6 +275,10 @@ BEGIN
     p_actor_id
   );
 
+  UPDATE public.claims
+  SET status='approved'
+  WHERE id=p_claim_id;
+
   UPDATE public.payment_transactions
   SET status='completed',
       provider_reference=trim(p_provider_reference),
@@ -284,7 +295,7 @@ BEGIN
     actor_id,actor_role,action_type,resource_type,resource_id,
     old_value,new_value,reason
   ) VALUES (
-    p_actor_id,p_actor_role,'SETTLE_CLAIM_PAYOUT','claims',NULL,
+    p_actor_id,p_actor_role,'SETTLE_CLAIM_PAYOUT','claims',p_claim_id::text,
     jsonb_build_object(
       'claim_id',p_claim_id,
       'transaction_id',v_tx.id,
