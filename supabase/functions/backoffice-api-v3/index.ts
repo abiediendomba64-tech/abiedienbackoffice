@@ -511,62 +511,47 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // ============ CLAIM / PAYROLL (member) — 75% auto-payout ============
-    // Real claim creation: payout_amount = amount * 0.75.
+    // ============ CLAIM / PAYROLL (member) — real atomic submit ============
     if (p === '/claims' && req.method === 'POST') {
-      if (!await can(a, 'ticket.create')) {
+      if (!await can(a, 'claim.create')) {
         return wrap(json({ error: 'forbidden', message: 'Anda tidak memiliki izin mengajukan klaim.' }, 403), req);
       }
       const body = (await req.json()) as any;
       const amount = Number(body.amount);
-      if (!amount || amount <= 0 || !Number.isFinite(amount)) {
+      if (!Number.isFinite(amount) || amount <= 0) {
         return wrap(json({ error: 'invalid_input', message: 'Nominal klaim tidak valid.' }, 422), req);
       }
-      const payoutAmount = Math.floor(amount * 0.75);
-      const bank = typeof body.bank === 'string' && body.bank.trim() ? body.bank.trim().toUpperCase() : '';
-      const account = typeof body.account === 'string' && body.account.trim() ? body.account.trim() : '';
+      const bank = typeof body.bank === 'string' ? body.bank.trim().toUpperCase() : '';
+      const account = typeof body.account === 'string' ? body.account.trim() : '';
       const description = typeof body.description === 'string' ? body.description.trim() : '';
       const fileName = typeof body.file_name === 'string' ? body.file_name.trim() : '';
-      const fileSize = typeof body.file_size === 'string' ? body.file_size.trim() : '';
-      if (!bank || !account) {
-        return wrap(json({ error: 'invalid_input', message: 'Bank dan nomor rekening wajib diisi.' }, 422), req);
+      if (!bank || !account || !fileName) {
+        return wrap(json({ error: 'invalid_input', message: 'Bank, nomor rekening, dan bukti klaim wajib diisi.' }, 422), req);
+      }
+      if (!/^\\d+\\//.test(fileName) || !fileName.startsWith(`${a.access.user_id}/`)) {
+        return wrap(json({ error: 'invalid_evidence_path', message: 'Lokasi bukti klaim tidak sesuai dengan identitas member.' }, 422), req);
       }
       try {
-        const tgId = a.access?.telegram_user_id ? Number(a.access.telegram_user_id) : null;
-        const claimNum = 'CLM-' + Date.now().toString(36).toUpperCase();
-        const desc = description || `Klaim transfer gaji sebesar Rp ${amount.toLocaleString('id-ID')}. Payout otomatis 75% = Rp ${payoutAmount.toLocaleString('id-ID')}.`;
-
-        const { data, error } = await db.from('claims').insert([{
-          claim_number: claimNum,
-          submitted_by: a.authUser.id,
-          telegram_user_id: tgId,
-          user_id: a.access.user_id,
-          claim_type: 'salary',
-          amount,
-          payout_amount: payoutAmount,
-          bank,
-          account_number: account,
-          status: 'pending',
-          evidence_required: !!fileName,
-          description: desc,
-          notes: desc,
-          evidence_path: fileName || null,
-          collected_data: {
-            source: 'backoffice_web',
-            file_name: fileName,
-            file_size: fileSize
-          }
-        }]).select('id,claim_number,claim_type,amount,payout_amount,bank,account_number,status,created_at').single();
-        if (error) {
-          return wrap(json({ error: error.message, message: 'Gagal membuat klaim.' }, 400), req);
+        const { data: canonical } = await db.from('users').select('id,telegram_id,auth_user_id,status').eq('id', a.access.user_id).maybeSingle();
+        if (!canonical || canonical.status !== 'active' || !canonical.telegram_id) {
+          return wrap(json({ error: 'member_identity_incomplete', message: 'Identitas Telegram member belum terhubung.' }, 409), req);
         }
-        return wrap(json({
-          success: true,
-          claim: data,
-          message: `Klaim berhasil diajukan. Payout 75% = Rp ${payoutAmount.toLocaleString('id-ID')}.`
-        }, 201), req);
+        const notes = description || `Klaim transfer gaji sebesar Rp ${amount.toLocaleString('id-ID')}.`;
+        const { data, error } = await db.rpc('submit_claim_atomic', {
+          p_telegram_user_id: Number(canonical.telegram_id),
+          p_claim_type: 'salary',
+          p_amount: amount,
+          p_notes: notes,
+          p_evidence_path: fileName,
+          p_submitted_by: a.authUser.id
+        });
+        if (error) throw error;
+        if (!data?.success) {
+          return wrap(json({ error: data?.error_code || 'claim_rejected', message: data?.error_code || 'Klaim tidak dapat diajukan.' }, 409), req);
+        }
+        return wrap(json({ success: true, claim: data, message: 'Klaim berhasil diajukan dan masuk antrean review.' }, 201), req);
       } catch (err: any) {
-        return wrap(json({ error: err.message, message: 'Gagal membuat klaim.' }, 400), req);
+        return wrap(json({ error: err.message || 'claim_submit_failed', message: 'Gagal membuat klaim.' }, 400), req);
       }
     }
 
