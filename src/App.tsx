@@ -2384,8 +2384,9 @@ function MembersView({ users: initialUsers, memberQuery, setMemberQuery, onSelec
     return localUsers.filter(u => {
       const q = memberQuery.toLowerCase();
       const matchesText = !memberQuery || (u.full_name || '').toLowerCase().includes(q) || (u.username || '').toLowerCase().includes(q) || (u.domain_name || '').toLowerCase().includes(q);
-      const isPending = u.status === 'pending' || u.status === 'pending_review' || !u.domain_verified;
-      const isActive = u.status === 'active' && u.domain_verified;
+      // Membership state is independent from domain verification. A member can be active while DNS/domain onboarding is still pending.
+      const isPending = u.status === 'pending' || u.status === 'pending_review';
+      const isActive = u.status === 'active';
       const isSuspended = u.status === 'suspended' || u.status === 'blocked';
 
       if (statusFilter === 'pending') return matchesText && isPending;
@@ -2395,8 +2396,8 @@ function MembersView({ users: initialUsers, memberQuery, setMemberQuery, onSelec
     });
   }, [localUsers, memberQuery, statusFilter]);
 
-  const pendingCount = localUsers.filter(u => u.status === 'pending' || u.status === 'pending_review' || !u.domain_verified).length;
-  const activeCount = localUsers.filter(u => u.status === 'active' && u.domain_verified).length;
+  const pendingCount = localUsers.filter(u => u.status === 'pending' || u.status === 'pending_review').length;
+  const activeCount = localUsers.filter(u => u.status === 'active').length;
 
   return (
     <div className="space-y-4 animate-fade-in">
