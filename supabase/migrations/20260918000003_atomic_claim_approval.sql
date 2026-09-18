@@ -115,7 +115,7 @@ FROM (VALUES
   ('super_admin'::varchar,'claim.create'::varchar), ('root'::varchar,'claim.create'::varchar)
 ) AS r(role, code)
 JOIN public.backoffice_capabilities cap ON cap.code=r.code
-ON CONFLICT (role, capability_id) DO NOTHING;
+ON CONFLICT (role, capability_code) DO UPDATE SET capability_id = EXCLUDED.capability_id;
 
 -- Claim evidence storage: members may upload/read only inside their canonical user-id folder.
 DROP POLICY IF EXISTS claim_evidence_member_insert ON storage.objects;
