@@ -51,7 +51,7 @@ BEGIN
   IF v_payout <= 0 THEN RAISE EXCEPTION 'Claim payout amount must be greater than zero'; END IF;
 
   SELECT id INTO v_expense_account FROM public.payment_accounts WHERE account_code = '5001-EXPENSE-GATEWAY' AND is_active;
-  SELECT id INTO v_bank_account FROM public.payment_accounts WHERE account_code = '1002-BANK-SETTLEMENT' AND is_active;
+  SELECT id INTO v_bank_account FROM public.payment_accounts WHERE account_code = '2002-PENDING-PAYOUT' AND is_active;
   IF v_expense_account IS NULL OR v_bank_account IS NULL THEN
     RAISE EXCEPTION 'Required payout ledger accounts are missing';
   END IF;
@@ -62,7 +62,7 @@ BEGIN
     currency, provider_code, provider_reference, payment_method, status, metadata
   ) VALUES (
     v_tx_code, v_claim.user_id, 'payout', v_payout, 0, v_payout,
-    'IDR', 'manual', NULL, 'bank_transfer', 'completed',
+    'IDR', 'manual', NULL, 'bank_transfer', 'pending',
     jsonb_build_object('source','claim_approval','claim_id',p_claim_id,
       'bank',v_claim.bank,'account_number',v_claim.account_number)
   ) RETURNING id INTO v_tx_id;
@@ -107,10 +107,15 @@ VALUES ('claim.manage', 'Review and approve member claims with payout posting', 
        ('claim.create', 'Submit a member claim with evidence', 'claim')
 ON CONFLICT (code) DO NOTHING;
 
-INSERT INTO public.backoffice_role_capabilities (role, capability_code)
-VALUES ('admin','claim.manage'), ('super_admin','claim.manage'), ('root','claim.manage'),
-       ('member','claim.create'), ('admin','claim.create'), ('super_admin','claim.create'), ('root','claim.create')
-ON CONFLICT (role, capability_code) DO NOTHING;
+INSERT INTO public.backoffice_role_capabilities (role, capability_id, capability_code)
+SELECT r.role, cap.id, cap.code
+FROM (VALUES
+  ('admin'::varchar,'claim.manage'::varchar), ('super_admin'::varchar,'claim.manage'::varchar), ('root'::varchar,'claim.manage'::varchar),
+  ('member'::varchar,'claim.create'::varchar), ('admin'::varchar,'claim.create'::varchar),
+  ('super_admin'::varchar,'claim.create'::varchar), ('root'::varchar,'claim.create'::varchar)
+) AS r(role, code)
+JOIN public.backoffice_capabilities cap ON cap.code=r.code
+ON CONFLICT (role, capability_id) DO NOTHING;
 
 -- Claim evidence storage: members may upload/read only inside their canonical user-id folder.
 DROP POLICY IF EXISTS claim_evidence_member_insert ON storage.objects;
