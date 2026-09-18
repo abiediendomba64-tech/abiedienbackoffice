@@ -8168,7 +8168,7 @@ function MemberPortalView({ name, telegramId, canonicalUserId, tickets: initialT
   const [claimBank, setClaimBank] = useState('BCA');
   const [claimAccount, setClaimAccount] = useState('');
   const [claimDesc, setClaimDesc] = useState('');
-  const [claimAttachment, setClaimAttachment] = useState<string | null>(null);
+  const [claimAttachment, setClaimAttachment] = useState<File | null>(null);
   const [claimAttachmentName, setClaimAttachmentName] = useState<string>('');
   const [claimAttachmentSize, setClaimAttachmentSize] = useState<string>('');
   const [claimSubmitting, setClaimSubmitting] = useState(false);
@@ -8282,71 +8282,55 @@ function MemberPortalView({ name, telegramId, canonicalUserId, tickets: initialT
     setClaimAttachmentName(file.name);
     setClaimAttachmentSize((file.size / 1024).toFixed(1) + ' KB');
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      setClaimAttachment(event.target?.result as string);
-      showToast(`File ${file.name} berhasil dilampirkan.`, 'success');
-    };
-    reader.readAsDataURL(file);
+    setClaimAttachment(file);
+    showToast(`File ${file.name} siap diunggah ke storage saat klaim dikirim.`, 'success');
   };
 
-  // Handle Submit Claim Gaji (75% System)
+  // Handle Submit Claim Gaji (75% System) — real claims table + claim-evidence storage.
   const handleSubmitClaim = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!claimAmount || !claimAccount) {
-      showToast('Harap lengkapi nominal dan nomor rekening!', 'error');
+    if (!claimAmount || !claimAccount || !claimAttachment) {
+      showToast('Nominal, rekening, dan bukti klaim wajib dilengkapi.', 'error');
       return;
     }
 
     const amount = Number(claimAmount);
-    const claim75Percent = Math.floor(amount * 0.75);
-    const platformFee = amount - claim75Percent;
-    const ticketNumber = `CLAIM-${Math.floor(100000 + Math.random() * 900000)}`;
-    const notes = `Klaim gaji dengan sistem 75%. Total: Rp ${amount.toLocaleString('id-ID')}, Diterima (75%): Rp ${claim75Percent.toLocaleString('id-ID')}, Platform Fee (25%): Rp ${platformFee.toLocaleString('id-ID')}. Bank: ${claimBank}, Rekening: ${claimAccount}. Lampiran: ${claimAttachmentName || 'Bukti Screenshot terlampir'}. Deskripsi: ${claimDesc || '-'}`;
-
-    const claimTicketData = {
-      ticket_number: ticketNumber,
-      user_id: canonicalUserId || Number(telegramId) || 0,
-      category: 'payroll_claim',
-      priority: 'high',
-      status: 'pending',
-      title: `Klaim Transfer Gaji (75%): Rp ${claim75Percent.toLocaleString('id-ID')} (${claimBank} - ${claimAccount})`,
-      description: notes,
-      collected_data: {
-        total_amount: amount,
-        claim_amount: claim75Percent,
-        platform_fee: platformFee,
-        bank_name: claimBank,
-        bank_account: claimAccount,
-        attachment_name: claimAttachmentName,
-        description: claimDesc,
-        user_name: name,
-        telegram_id: telegramId
-      }
-    };
+    if (!Number.isFinite(amount) || amount <= 0) {
+      showToast('Nominal klaim tidak valid.', 'error');
+      return;
+    }
 
     setClaimSubmitting(true);
     try {
-      if (canonicalUserId) {
-        const { error } = await supabase.from('tickets').insert([claimTicketData]);
-        if (error) throw error;
-      }
-      setMemberTickets([
-        {
-          id: Date.now(),
-          ...claimTicketData,
-          created_at: new Date().toISOString(),
-          user_name: name,
-          notes
-        },
-        ...memberTickets
-      ]);
+      if (!canonicalUserId) throw new Error('Identitas member canonical belum tersedia. Silakan login ulang.');
+
+      const safeName = claimAttachment.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path = `${canonicalUserId}/${crypto.randomUUID()}-${safeName}`;
+      const upload = await supabase.storage.from('claim-evidence').upload(path, claimAttachment, {
+        contentType: claimAttachment.type || 'application/octet-stream',
+        upsert: false,
+      });
+      if (upload.error) throw new Error(`Upload bukti gagal: ${upload.error.message}`);
+
+      const res = await api<any>('/claims', {
+        method: 'POST',
+        body: JSON.stringify({
+          amount,
+          bank: claimBank,
+          account: claimAccount,
+          description: claimDesc,
+          file_name: path,
+          file_size: String(claimAttachment.size),
+        }),
+      });
+      if (!res?.success) throw new Error(res?.message || res?.error || 'Gagal mengajukan klaim.');
+
       setClaimAmount('');
       setClaimDesc('');
       setClaimAttachment(null);
       setClaimAttachmentName('');
       setClaimAttachmentSize('');
-      showToast(`Klaim gaji berhasil diajukan! Sistem 75%: Rp ${claim75Percent.toLocaleString('id-ID')} akan ditransfer ke rekening Anda.`, 'success');
+      showToast(res.message || 'Klaim gaji berhasil diajukan dan masuk antrean review.', 'success');
       if (onRefresh) onRefresh();
     } catch (err: any) {
       showToast(`Gagal mengajukan klaim: ${err.message}`, 'error');
@@ -8386,37 +8370,26 @@ function MemberPortalView({ name, telegramId, canonicalUserId, tickets: initialT
   const handleCreateTicketSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!ticketTitle.trim()) return;
-    const ticketNumber = `TKT-${Math.floor(100000 + Math.random() * 900000)}`;
-    const ticketData = {
-      ticket_number: ticketNumber,
-      user_id: canonicalUserId || Number(telegramId) || 0,
-      category: ticketCat,
-      priority: ticketPriority,
-      status: 'pending',
-      title: ticketTitle.trim(),
-      description: ticketDesc.trim() || '-',
-      collected_data: { user_name: name, telegram_id: telegramId }
-    };
-
     try {
-      if (canonicalUserId) {
-        const { error } = await supabase.from('tickets').insert([ticketData]);
-        if (error) throw error;
-      }
-      setMemberTickets([
-        {
-          id: Date.now(),
-          ...ticketData,
-          created_at: new Date().toISOString(),
-          user_name: name,
-          notes: ticketDesc
-        },
-        ...memberTickets
+      const res = await api<any>('/tickets', {
+        method: 'POST',
+        body: JSON.stringify({
+          category: ticketCat,
+          priority: ticketPriority,
+          title: ticketTitle.trim(),
+          description: ticketDesc.trim() || '-',
+          collected_data: { user_name: name, telegram_id: telegramId }
+        })
+      });
+      if (!res?.success || !res.ticket) throw new Error(res?.message || res?.error || 'Gagal submit tiket.');
+      setMemberTickets(prev => [
+        { ...res.ticket, user_name: name, notes: ticketDesc },
+        ...prev.filter((t: any) => t.id !== res.ticket.id)
       ]);
       setNewTicketModal(false);
       setTicketTitle('');
       setTicketDesc('');
-      showToast(`Tiket Operasional #${ticketNumber} berhasil disubmit ke antrean admin.`, 'success');
+      showToast(`Tiket resmi #${res.ticket.ticket_number} berhasil disubmit ke antrean admin.`, 'success');
       if (onRefresh) onRefresh();
     } catch (err: any) {
       showToast(`Gagal submit tiket: ${err.message}`, 'error');
