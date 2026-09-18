@@ -152,7 +152,7 @@ export async function loginAdminWithEmail(
   // credential exchange, while the Edge Function still authenticates against
   // the same Supabase Auth tenant.
   try {
-    const apiBase = (import.meta.env.VITE_BACKOFFICE_API_URL || `${supabaseUrl}/functions/v1/backoffice-api-v3`).replace(/\\/$/, '');
+    const apiBase = (import.meta.env.VITE_BACKOFFICE_API_URL || `${supabaseUrl}/functions/v1/backoffice-api-v3`).replace(/\/$/, '');
     const response = await fetch(`${apiBase}/login`, {
       method: 'POST',
       headers: {
