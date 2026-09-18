@@ -949,7 +949,7 @@ Deno.serve(async (req: Request) => {
       const senderName = `${sender.first_name || ''} ${sender.last_name || ''}`.trim() || sender.username || `User ${sender.id}`;
 
       const incomingText = String(message?.text || '').trim();
-      const bindMatch = incomingText.match(/^\\/start(?:@[^\\s]+)?\\s+bind_([a-f0-9]{64})$/i);
+      const bindMatch = incomingText.match(/^\/start(?:@[^\s]+)?\s+bind_([a-f0-9]{64})$/i);
       if (bindMatch) {
         const tokenHash = await sha256Hex(bindMatch[1]);
         const { data: challenge } = await supabaseAdmin
