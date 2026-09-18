@@ -410,6 +410,7 @@ export default function App() {
   const [tickets, setTickets] = useState<Ticket[]>([]); 
   const [payments, setPayments] = useState<Payment[]>([]);
   const [claims, setClaims] = useState<any[]>([]);
+  const [onboardingRequests, setOnboardingRequests] = useState<any[]>([]);
   const [forumTopics, setForumTopics] = useState<any[]>([]);
   const [loading, setLoading] = useState(true); 
   const [error, setError] = useState(''); 
@@ -729,13 +730,14 @@ export default function App() {
         return;
       }
 
-      const [s, u, t, p, f, cl] = await Promise.all([
+      const [s, u, t, p, f, cl, onb] = await Promise.all([
         api<Stats>('/stats'),
         api<User[]>('/users'),
         api<Ticket[]>('/tickets'),
         api<Payment[]>('/payments'),
         api<any[]>('/forum-topics').catch(() => []),
-        api<any[]>('/claims').catch(() => [])
+        api<any[]>('/claims').catch(() => []),
+        api<any[]>('/onboarding-requests').catch(() => [])
       ]); 
       setStats(s); 
       setUsers(u); 
@@ -743,6 +745,7 @@ export default function App() {
       setPayments(p); 
       setForumTopics(f);
       setClaims(cl);
+      setOnboardingRequests(onb);
     } catch (e: any) { 
       setError(e?.message || 'Backend belum tersedia'); 
     } finally { 
@@ -1503,7 +1506,7 @@ export default function App() {
                   )}
 
                   {webTab === 'requests' && (
-                    <RequestsOpsView tickets={tickets} onSelect={setSelected} />
+                    <RequestsOpsView tickets={tickets} onboardingRequests={onboardingRequests} onRefresh={load} onSelect={setSelected} />
                   )}
 
                   {webTab === 'tickets' && (
@@ -3100,13 +3103,29 @@ function DomainsView({ domains, onSelect }: { domains: any[]; onSelect: (v: any)
   );
 }
 
-function RequestsOpsView({ tickets, onSelect }: { tickets: Ticket[]; onSelect: (v: any) => void }) {
+function RequestsOpsView({ tickets, onboardingRequests = [], onRefresh, onSelect }: { tickets: Ticket[]; onboardingRequests?: any[]; onRefresh: () => Promise<void>; onSelect: (v: any) => void }) {
   const opTickets = useMemo(() => {
     return tickets.filter(t => [
       'push_request', 'cdn_request', 'redirect_request', 'domain_request', 
       'seo_audit', 'web_update', 'ownership_transfer'
     ].includes(t.category));
   }, [tickets]);
+
+  const pendingOnboarding = onboardingRequests.filter((r: any) => r.status === 'PENDING_REVIEW');
+  const decideOnboarding = async (requestId: number, decision: 'APPROVED' | 'REJECTED') => {
+    let rejection_reason = '';
+    if (decision === 'REJECTED') {
+      rejection_reason = window.prompt('Alasan penolakan wajib diisi:')?.trim() || '';
+      if (!rejection_reason) return;
+    }
+    try {
+      await api('/admin/onboarding/decision', { method: 'POST', body: JSON.stringify({ request_id: requestId, decision, rejection_reason }) });
+      await onRefresh();
+      window.alert(decision === 'APPROVED' ? 'Onboarding disetujui.' : 'Onboarding ditolak.');
+    } catch (err: any) {
+      window.alert(err?.message || 'Keputusan onboarding gagal.');
+    }
+  };
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -3123,6 +3142,29 @@ function RequestsOpsView({ tickets, onSelect }: { tickets: Ticket[]; onSelect: (
         <span className="px-3 py-1 rounded-xl bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 text-xs font-bold shrink-0">
           {opTickets.length} Request Aktif
         </span>
+      </div>
+
+      <div className="glass-card p-4 rounded-2xl border border-amber-500/20 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h4 className="text-sm font-extrabold text-white">Member Onboarding Review</h4>
+            <p className="text-[11px] text-slate-400">Approval atomik: request + canonical users + Telegram link + audit + notification queue.</p>
+          </div>
+          <span className="text-xs font-bold text-amber-300">{pendingOnboarding.length} pending</span>
+        </div>
+        {pendingOnboarding.length === 0 ? <div className="text-xs text-slate-500">Tidak ada pengajuan onboarding yang menunggu review.</div> :
+          pendingOnboarding.slice(0,50).map((r:any) => (
+            <div key={r.id} className="p-3 rounded-xl bg-black/20 border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-bold text-white">{r.full_name} · {r.email}</div>
+                <div className="text-[11px] text-slate-400">Telegram: @{r.telegram_username || 'belum terhubung'} · Diajukan {formatDateTime(r.created_at)}</div>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => decideOnboarding(r.id,'APPROVED')} className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold">Approve</button>
+                <button onClick={() => decideOnboarding(r.id,'REJECTED')} className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold">Reject</button>
+              </div>
+            </div>
+          ))}
       </div>
 
       <ResponsiveDataList 
