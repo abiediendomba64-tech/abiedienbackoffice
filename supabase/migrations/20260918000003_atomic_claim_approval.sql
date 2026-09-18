@@ -1,5 +1,8 @@
 -- Atomic claim approval: claim state, payout transaction, double-entry ledger,
--- member balance and audit are committed together or not at all.
+-- audit and Telegram queue are committed together or not at all.
+-- NOTE: the production chart of accounts contains 5001-EXPENSE-GATEWAY and
+-- 1002-BANK-SETTLEMENT; there is no EXPENSE_MEMBER_CLAIMS/TREASURY_DISBURSEMENT
+-- account, so this migration uses the canonical existing accounts.
 CREATE OR REPLACE FUNCTION public.approve_claim_atomic(
   p_claim_id uuid,
   p_actor_id bigint,
@@ -17,8 +20,7 @@ DECLARE
   v_tx_id bigint;
   v_tx_code varchar(80);
   v_payout numeric(18,2);
-  v_balance numeric(18,2);
-  v_deposit_account bigint;
+  v_expense_account bigint;
   v_bank_account bigint;
 BEGIN
   IF auth.role() <> 'service_role' THEN
@@ -34,6 +36,9 @@ BEGIN
   IF v_claim.status = 'approved' THEN
     SELECT * INTO v_existing_tx FROM public.payment_transactions
     WHERE metadata->>'claim_id' = p_claim_id::text ORDER BY id DESC LIMIT 1;
+    IF v_existing_tx.id IS NULL THEN
+      RAISE EXCEPTION 'Claim % is approved but has no linked payout transaction; refusing silent repair', p_claim_id;
+    END IF;
     RETURN jsonb_build_object('success', true, 'already_approved', true,
       'claim_id', p_claim_id, 'transaction_id', v_existing_tx.id,
       'transaction_code', v_existing_tx.transaction_code, 'status', 'approved');
@@ -45,9 +50,9 @@ BEGIN
   v_payout := COALESCE(v_claim.payout_amount, floor(COALESCE(v_claim.amount,0) * 0.75));
   IF v_payout <= 0 THEN RAISE EXCEPTION 'Claim payout amount must be greater than zero'; END IF;
 
-  SELECT id INTO v_deposit_account FROM public.payment_accounts WHERE account_code = '2001-MEMBER-DEPOSIT';
-  SELECT id INTO v_bank_account FROM public.payment_accounts WHERE account_code = '1002-BANK-SETTLEMENT';
-  IF v_deposit_account IS NULL OR v_bank_account IS NULL THEN
+  SELECT id INTO v_expense_account FROM public.payment_accounts WHERE account_code = '5001-EXPENSE-GATEWAY' AND is_active;
+  SELECT id INTO v_bank_account FROM public.payment_accounts WHERE account_code = '1002-BANK-SETTLEMENT' AND is_active;
+  IF v_expense_account IS NULL OR v_bank_account IS NULL THEN
     RAISE EXCEPTION 'Required payout ledger accounts are missing';
   END IF;
 
@@ -63,20 +68,9 @@ BEGIN
   ) RETURNING id INTO v_tx_id;
 
   PERFORM public.record_double_entry_ledger(
-    v_tx_id, v_deposit_account, v_bank_account, v_payout,
+    v_tx_id, v_expense_account, v_bank_account, v_payout,
     COALESCE(p_notes, 'Claim payout approved'), p_actor_id
   );
-
-  SELECT coin_balance INTO v_balance FROM public.user_coin_balances
-  WHERE user_id = v_claim.user_id FOR UPDATE;
-  IF v_balance IS NOT NULL THEN
-    IF v_balance < v_payout THEN
-      RAISE EXCEPTION 'Insufficient member balance for payout: balance %, payout %', v_balance, v_payout;
-    END IF;
-    UPDATE public.user_coin_balances
-    SET coin_balance = coin_balance - v_payout, last_activity_at = NOW()
-    WHERE user_id = v_claim.user_id;
-  END IF;
 
   UPDATE public.claims SET status='approved', reviewed_by=p_actor_id,
     reviewed_at=NOW(), updated_at=NOW(), notes=COALESCE(p_notes,notes)
@@ -109,11 +103,13 @@ REVOKE EXECUTE ON FUNCTION public.approve_claim_atomic(uuid,bigint,varchar,text)
 GRANT EXECUTE ON FUNCTION public.approve_claim_atomic(uuid,bigint,varchar,text) TO service_role;
 
 INSERT INTO public.backoffice_capabilities (code, description, category)
-VALUES ('claim.manage', 'Review and approve member claims with payout posting', 'claim')
+VALUES ('claim.manage', 'Review and approve member claims with payout posting', 'claim'),
+       ('claim.create', 'Submit a member claim with evidence', 'claim')
 ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO public.backoffice_role_capabilities (role, capability_code)
-VALUES ('admin','claim.manage'), ('super_admin','claim.manage'), ('root','claim.manage')
+VALUES ('admin','claim.manage'), ('super_admin','claim.manage'), ('root','claim.manage'),
+       ('member','claim.create'), ('admin','claim.create'), ('super_admin','claim.create'), ('root','claim.create')
 ON CONFLICT (role, capability_code) DO NOTHING;
 
 -- Claim evidence storage: members may upload/read only inside their canonical user-id folder.
