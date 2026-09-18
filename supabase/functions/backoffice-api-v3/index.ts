@@ -936,85 +936,176 @@ Deno.serve(async (req: Request) => {
 
       if (p === '/admin/users/create' && req.method === 'POST') {
         const body = await req.json();
-        const { email, password, role, fullName, telegramId } = body;
-        if (!email || !password || !fullName) {
-          return wrap(json({ error: 'invalid_input', message: 'Email, password, dan nama wajib diisi.' }, 422), req);
+        const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+        const password = typeof body.password === 'string' ? body.password : '';
+        const fullName = typeof body.fullName === 'string' ? body.fullName.trim() : '';
+        const role = body.role === 'dev' || body.role === 'admin' ? body.role : null;
+        const telegramId = body.telegramId == null || body.telegramId === '' ? null : Number(body.telegramId);
+
+        if (!email || !password || !fullName || !role || password.length < 8 || (telegramId !== null && !Number.isSafeInteger(telegramId))) {
+          return wrap(json({ error: 'invalid_input', message: 'Email, nama, role (admin/dev), password minimal 8 karakter, dan Telegram ID valid wajib diisi.' }, 422), req);
+        }
+
+        const { data: existing } = await db.from('admin_accounts')
+          .select('id')
+          .eq('email', email)
+          .maybeSingle();
+        if (existing) {
+          return wrap(json({ error: 'conflict', message: 'Email admin sudah terdaftar.' }, 409), req);
         }
 
         const { data: authData, error: authError } = await db.auth.admin.createUser({
-          email: email.trim().toLowerCase(),
+          email,
           password,
           email_confirm: true,
-          user_metadata: { full_name: fullName, role: role || 'admin', telegram_id: telegramId }
+          user_metadata: { full_name: fullName, role, telegram_id: telegramId }
         });
 
-        if (authError) {
-          return wrap(json({ error: authError.message }, 400), req);
+        if (authError || !authData?.user?.id) {
+          return wrap(json({ error: authError?.message || 'Gagal membuat user Auth.' }, 400), req);
         }
 
-        const { error: dbError } = await db.from('admin_accounts').insert({
+        const { data: account, error: dbError } = await db.from('admin_accounts').insert({
           auth_user_id: authData.user.id,
-          email: email.trim().toLowerCase(),
-          role: role || 'admin',
-          telegram_id: telegramId ? Number(telegramId) : null,
+          email,
+          role,
+          telegram_id: telegramId,
           full_name: fullName,
           is_active: true
-        });
+        }).select('id,email,role,telegram_id,full_name,is_active,created_at').single();
 
-        if (dbError) {
-          return wrap(json({ error: dbError.message }, 400), req);
+        // Compensating action: never leave an orphan auth.users account if the
+        // canonical admin_accounts row cannot be created.
+        if (dbError || !account) {
+          await db.auth.admin.deleteUser(authData.user.id).catch(() => {});
+          return wrap(json({ error: dbError?.message || 'Gagal membuat record admin.' }, 400), req);
         }
 
-        return wrap(json({ success: true, user: authData.user }), req);
+        return wrap(json({ success: true, account }), req);
       }
 
       if (p === '/admin/users/update' && req.method === 'PUT') {
         const body = await req.json();
-        const { adminId, updates } = body;
-        if (!adminId || !updates) {
-          return wrap(json({ error: 'invalid_input', message: 'ID akun dan data perubahan wajib diisi.' }, 422), req);
+        const adminId = typeof body.adminId === 'string' ? body.adminId : '';
+        const input = body.updates && typeof body.updates === 'object' ? body.updates : {};
+        if (!adminId || !Object.keys(input).length) {
+          return wrap(json({ error: 'invalid_input', message: 'ID akun dan perubahan wajib diisi.' }, 422), req);
+        }
+
+        // Never spread client-controlled fields into admin_accounts.
+        const updates: Record<string, any> = {};
+        if (typeof input.email === 'string' && input.email.trim()) updates.email = input.email.trim().toLowerCase();
+        if (typeof input.full_name === 'string' && input.full_name.trim()) updates.full_name = input.full_name.trim();
+        if (input.telegram_id === null || (Number.isSafeInteger(Number(input.telegram_id)) && Number(input.telegram_id) > 0)) {
+          updates.telegram_id = input.telegram_id === null ? null : Number(input.telegram_id);
+        }
+        if (input.role !== undefined) {
+          if (input.role !== 'admin' && input.role !== 'dev') {
+            return wrap(json({ error: 'invalid_input', message: 'Role target hanya admin atau dev.' }, 422), req);
+          }
+          updates.role = input.role;
+        }
+        if (input.is_active !== undefined) {
+          if (typeof input.is_active !== 'boolean') {
+            return wrap(json({ error: 'invalid_input', message: 'is_active harus boolean.' }, 422), req);
+          }
+          updates.is_active = input.is_active;
+        }
+        if (!Object.keys(updates).length) {
+          return wrap(json({ error: 'invalid_input', message: 'Tidak ada field yang dapat diubah.' }, 422), req);
+        }
+
+        const { data: target, error: targetError } = await db.from('admin_accounts')
+          .select('id,auth_user_id,role,is_active')
+          .eq('id', adminId)
+          .maybeSingle();
+        if (targetError || !target) {
+          return wrap(json({ error: 'not_found', message: 'Akun admin tidak ditemukan.' }, 404), req);
+        }
+        if (target.role === 'super_admin' || target.role === 'root') {
+          return wrap(json({ error: 'forbidden', message: 'Akun Super Admin tidak boleh diubah melalui operator account CRUD.' }, 403), req);
+        }
+        if (target.auth_user_id === a.authUser.id && updates.is_active === false) {
+          return wrap(json({ error: 'invalid_action', message: 'Tidak boleh menonaktifkan sesi sendiri.' }, 409), req);
         }
 
         const { error } = await db.from('admin_accounts')
           .update({ ...updates, updated_at: new Date().toISOString() })
           .eq('id', adminId);
+        if (error) return wrap(json({ error: error.message }, 400), req);
 
-        if (error) {
-          return wrap(json({ error: error.message }, 400), req);
+        // Keep Auth metadata aligned with the canonical admin_accounts identity.
+        if (target.auth_user_id) {
+          const metadataPatch: Record<string, any> = {};
+          if (updates.full_name !== undefined) metadataPatch.full_name = updates.full_name;
+          if (updates.role !== undefined) metadataPatch.role = updates.role;
+          if (updates.telegram_id !== undefined) metadataPatch.telegram_id = updates.telegram_id;
+          if (Object.keys(metadataPatch).length) {
+            const { error: metaError } = await db.auth.admin.updateUserById(target.auth_user_id, { user_metadata: metadataPatch });
+            if (metaError) {
+              return wrap(json({ error: 'Auth metadata update failed: ' + metaError.message }, 500), req);
+            }
+          }
         }
         return wrap(json({ success: true }), req);
       }
 
       if (p === '/admin/users/reset-password' && req.method === 'POST') {
         const body = await req.json();
-        const { adminId, newPassword } = body;
-        if (!adminId || !newPassword) {
-          return wrap(json({ error: 'invalid_input', message: 'ID admin dan password baru wajib diisi.' }, 422), req);
+        const adminId = typeof body.adminId === 'string' ? body.adminId : '';
+        const newPassword = typeof body.newPassword === 'string' ? body.newPassword : '';
+        if (!adminId || newPassword.length < 8) {
+          return wrap(json({ error: 'invalid_input', message: 'ID admin wajib diisi dan password minimal 8 karakter.' }, 422), req);
         }
 
-        const { data: acc } = await db.from('admin_accounts').select('auth_user_id').eq('id', adminId).maybeSingle();
-        const targetAuthUid = acc?.auth_user_id || adminId;
-
-        const { error } = await db.auth.admin.updateUserById(targetAuthUid, { password: newPassword });
-        if (error) {
-          return wrap(json({ error: error.message }, 400), req);
+        const { data: acc } = await db.from('admin_accounts')
+          .select('auth_user_id,role,is_active')
+          .eq('id', adminId)
+          .maybeSingle();
+        if (!acc?.auth_user_id) {
+          return wrap(json({ error: 'not_found', message: 'Akun admin tidak ditemukan.' }, 404), req);
         }
+        if (acc.role === 'super_admin' || acc.role === 'root') {
+          return wrap(json({ error: 'forbidden', message: 'Password Super Admin tidak diubah melalui endpoint operator CRUD.' }, 403), req);
+        }
+
+        const { error } = await db.auth.admin.updateUserById(acc.auth_user_id, { password: newPassword });
+        if (error) return wrap(json({ error: error.message }, 400), req);
         return wrap(json({ success: true }), req);
       }
 
       if (p === '/admin/users/delete' && req.method === 'DELETE') {
         const body = await req.json();
-        const { adminId } = body;
+        const adminId = typeof body.adminId === 'string' ? body.adminId : '';
         if (!adminId) {
           return wrap(json({ error: 'invalid_input', message: 'ID admin wajib diisi.' }, 422), req);
         }
 
-        const { data: acc } = await db.from('admin_accounts').select('auth_user_id').eq('id', adminId).maybeSingle();
-        const targetAuthUid = acc?.auth_user_id || adminId;
+        const { data: acc } = await db.from('admin_accounts')
+          .select('auth_user_id,role,is_active')
+          .eq('id', adminId)
+          .maybeSingle();
+        if (!acc?.auth_user_id) {
+          return wrap(json({ error: 'not_found', message: 'Akun admin tidak ditemukan.' }, 404), req);
+        }
+        if (acc.role === 'super_admin' || acc.role === 'root' || acc.auth_user_id === a.authUser.id) {
+          return wrap(json({ error: 'forbidden', message: 'Akun Super Admin/root atau sesi sendiri tidak boleh dihapus.' }, 403), req);
+        }
 
-        await db.from('admin_accounts').delete().eq('id', adminId);
-        await db.from('dashboard_access').delete().eq('auth_user_id', targetAuthUid);
-        await db.auth.admin.deleteUser(targetAuthUid).catch(() => {});
+        const { error: dbError } = await db.from('admin_accounts').delete().eq('id', adminId);
+        if (dbError) return wrap(json({ error: dbError.message }, 400), req);
+
+        const { error: accessError } = await db.from('dashboard_access').delete().eq('auth_user_id', acc.auth_user_id);
+        if (accessError) {
+          return wrap(json({ error: accessError.message }, 500), req);
+        }
+
+        const { error: authError } = await db.auth.admin.deleteUser(acc.auth_user_id);
+        if (authError) {
+          // Do not report success if Auth deletion failed. The DB row is already
+          // removed, so an operator can safely retry reconciliation.
+          return wrap(json({ error: authError.message, code: 'auth_delete_failed' }, 502), req);
+        }
 
         return wrap(json({ success: true }), req);
       }
