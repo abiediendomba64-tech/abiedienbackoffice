@@ -631,52 +631,50 @@ export default function App() {
         }
 
         localStorage.setItem('backoffice_access_token', session.access_token);
-        const isSuperPath = window.location.pathname.toLowerCase().startsWith('/super') || 
-                            window.location.pathname.toLowerCase().startsWith('/admin');
-        if (isSuperPath) {
-          const adminCheck = await verifyAdminAccess();
-          const validAdminRoles: UserRole[] = ['super_admin', 'admin', 'dev'];
-          if (adminCheck.allowed && adminCheck.role && validAdminRoles.includes(adminCheck.role as UserRole)) {
-            const role = adminCheck.role as UserRole;
-            const name = adminCheck.full_name || session.user.email || 'Admin';
-            setCurrentUserRole(role);
-            setCurrentUserName(name);
-            localStorage.setItem('user_role', role);
-            localStorage.setItem('user_name', name);
-            setAuthenticated(true);
-            showToast(`Login ${role === 'super_admin' ? 'Super Admin' : 'Admin'} Berhasil! (${name})`, 'success');
-          } else {
-            await authSignOut();
-            setAuthenticated(false);
-            setCurrentUserRole('');
-            localStorage.removeItem('user_role');
-            localStorage.removeItem('user_name');
-            localStorage.removeItem('backoffice_access_token');
-            showToast(adminCheck.reason || 'Akses ditolak: Akun ini bukan Super Admin atau Admin yang terdaftar dan aktif di database.', 'error');
-          }
-        } else {
-          // Member path: Supabase Auth identity ≠ business membership.
-          // verify_member_access() is the ONLY authority; if denied, drop the
-          // session and stay on the login page. Never treat SIGNED_IN as member.
-          const memberCheck = await verifyMemberAccess();
-          if (!memberCheck.allowed) {
-            await authSignOut();
-            setAuthenticated(false);
-            setCurrentCanonicalUserId(null);
-            localStorage.removeItem('user_canonical_id');
-            showToast(memberCheck.reason || 'Akses ditolak: Akun belum terdaftar sebagai member terverifikasi.', 'error');
-          } else {
-            const name = memberCheck.full_name || session.user.email || 'Member';
-            setCurrentUserRole('member');
-            setCurrentUserName(name);
-            setCurrentCanonicalUserId(memberCheck.user_id ?? null);
-            localStorage.setItem('user_role', 'member');
-            localStorage.setItem('user_name', name);
-            if (memberCheck.user_id != null) localStorage.setItem('user_canonical_id', String(memberCheck.user_id));
-            setAuthenticated(true);
-            showToast(`Login Member Berhasil! (${name})`, 'success');
-          }
+
+        // 1. Check if user is registered Admin (Super Admin / Admin / Dev)
+        const adminCheck = await verifyAdminAccess();
+        const validAdminRoles: UserRole[] = ['super_admin', 'admin', 'dev'];
+
+        if (adminCheck.allowed && adminCheck.role && validAdminRoles.includes(adminCheck.role as UserRole)) {
+          const role = adminCheck.role as UserRole;
+          const name = adminCheck.full_name || session.user.email || 'Admin';
+          setCurrentUserRole(role);
+          setCurrentUserName(name);
+          localStorage.setItem('user_role', role);
+          localStorage.setItem('user_name', name);
+          setAuthenticated(true);
+          navigate('/superadm');
+          showToast(`Login ${role === 'super_admin' ? 'Super Admin' : 'Admin'} Berhasil! (${name})`, 'success');
+          return;
         }
+
+        // 2. If not admin, check if user is registered Member
+        const memberCheck = await verifyMemberAccess();
+        if (memberCheck.allowed) {
+          const name = memberCheck.full_name || session.user.email || 'Member';
+          setCurrentUserRole('member');
+          setCurrentUserName(name);
+          setCurrentCanonicalUserId(memberCheck.user_id ?? null);
+          localStorage.setItem('user_role', 'member');
+          localStorage.setItem('user_name', name);
+          if (memberCheck.user_id != null) localStorage.setItem('user_canonical_id', String(memberCheck.user_id));
+          setAuthenticated(true);
+          navigate('/member/login');
+          showToast(`Login Member Berhasil! (${name})`, 'success');
+          return;
+        }
+
+        // 3. User is neither active Admin nor active Member
+        await authSignOut();
+        setAuthenticated(false);
+        setCurrentUserRole('');
+        setCurrentCanonicalUserId(null);
+        localStorage.removeItem('user_role');
+        localStorage.removeItem('user_name');
+        localStorage.removeItem('backoffice_access_token');
+        localStorage.removeItem('user_canonical_id');
+        showToast(adminCheck.reason || memberCheck.reason || 'Akses ditolak: Akun belum terdaftar atau belum aktif.', 'error');
       } else if (event === 'SIGNED_OUT') {
         setAuthenticated(false);
         setCurrentUserRole('');

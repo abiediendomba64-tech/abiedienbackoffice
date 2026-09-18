@@ -150,9 +150,12 @@ export async function loginMemberWithEmail(
 
 export async function sendMagicLink(email: string): Promise<{ success: boolean; error?: string }> {
   try {
+    const isSuper = typeof window !== 'undefined' && 
+      (window.location.pathname.toLowerCase().startsWith('/super') || window.location.pathname.toLowerCase().startsWith('/admin'));
+    const redirectTo = isSuper ? `${window.location.origin}/superadm` : `${window.location.origin}/member/login`;
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: window.location.origin },
+      options: { emailRedirectTo: redirectTo },
     });
     if (error) return { success: false, error: error.message };
     return { success: true };
