@@ -115,3 +115,31 @@ ON CONFLICT (code) DO NOTHING;
 INSERT INTO public.backoffice_role_capabilities (role, capability_code)
 VALUES ('admin','claim.manage'), ('super_admin','claim.manage'), ('root','claim.manage')
 ON CONFLICT (role, capability_code) DO NOTHING;
+
+-- Claim evidence storage: members may upload/read only inside their canonical user-id folder.
+DROP POLICY IF EXISTS claim_evidence_member_insert ON storage.objects;
+CREATE POLICY claim_evidence_member_insert
+ON storage.objects FOR INSERT TO authenticated
+WITH CHECK (
+  bucket_id = 'claim-evidence'
+  AND split_part(name, '/', 1) ~ '^[0-9]+$'
+  AND EXISTS (
+    SELECT 1 FROM public.users u
+    WHERE u.id = split_part(name, '/', 1)::bigint
+      AND u.auth_user_id = auth.uid()
+      AND u.status = 'active'
+  )
+);
+
+DROP POLICY IF EXISTS claim_evidence_member_select ON storage.objects;
+CREATE POLICY claim_evidence_member_select
+ON storage.objects FOR SELECT TO authenticated
+USING (
+  bucket_id = 'claim-evidence'
+  AND split_part(name, '/', 1) ~ '^[0-9]+$'
+  AND EXISTS (
+    SELECT 1 FROM public.users u
+    WHERE u.id = split_part(name, '/', 1)::bigint
+      AND u.auth_user_id = auth.uid()
+  )
+);
