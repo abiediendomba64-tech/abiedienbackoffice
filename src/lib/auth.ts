@@ -26,7 +26,7 @@ async function adminApi<T>(path: string, init: RequestInit = {}): Promise<T> {
   const base = (
     import.meta.env.VITE_BACKOFFICE_API_URL ||
     `${import.meta.env.VITE_SUPABASE_URL || 'https://pnvnpencatzspkwxspac.supabase.co'}/functions/v1/backoffice-api-v3`
-  ).replace(/\\/$/, '');
+  ).replace(/\/$/, '');
 
   const response = await fetch(`${base}${path}`, {
     ...init,
