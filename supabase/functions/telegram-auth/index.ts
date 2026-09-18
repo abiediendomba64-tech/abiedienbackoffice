@@ -610,6 +610,61 @@ Deno.serve(async (req: Request) => {
     // ==========================================
     // 0.0 PROOF-OF-POSSESSION OPERATOR BINDING
     // ==========================================
+    if (req.method === 'POST' && pathname === '/binding-status') {
+      const authUser = await getBearerUser(req);
+      if (!authUser) {
+        return new Response(JSON.stringify({ bound: false, error: 'Authenticated web session required' }), {
+          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const admin = await getActiveAdminForAuth(authUser.id);
+      if (!admin) {
+        return new Response(JSON.stringify({ bound: false, error: 'Active admin account not found' }), {
+          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const { data: dashboardAccess, error: dashboardError } = await supabaseAdmin
+        .from('dashboard_access')
+        .select('user_id,role,enabled,is_active,expires_at')
+        .eq('auth_user_id', authUser.id)
+        .eq('enabled', true)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (dashboardError) {
+        return new Response(JSON.stringify({ bound: false, error: dashboardError.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const { data: canonicalUser, error: userError } = await supabaseAdmin
+        .from('users')
+        .select('id,auth_user_id,email,role,telegram_id')
+        .eq('auth_user_id', authUser.id)
+        .maybeSingle();
+
+      if (userError) {
+        return new Response(JSON.stringify({ bound: false, error: userError.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const canonicalUserId = dashboardAccess?.user_id ?? canonicalUser?.id ?? null;
+      const telegramId = admin.telegram_id ?? canonicalUser?.telegram_id ?? null;
+      const bound = canonicalUserId != null && telegramId != null && dashboardAccess?.user_id === canonicalUserId;
+
+      return new Response(JSON.stringify({
+        bound,
+        auth_user_id: authUser.id,
+        email: authUser.email || admin.email || canonicalUser?.email || null,
+        role: admin.role,
+        canonical_user_id: canonicalUserId,
+        telegram_id: telegramId,
+      }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     if (req.method === 'POST' && (pathname === '/bind' || body.action === 'bind-init-data')) {
       const authUser = await getBearerUser(req);
       if (!authUser) {
@@ -979,7 +1034,7 @@ Deno.serve(async (req: Request) => {
 
           await sendTelegramMessage(botToken, chatId,
             `✅ *Telegram Berhasil Terikat*\\n\\nRole: *${bindResult?.role || 'operator'}*\\nIdentitas operator telah disatukan secara atomic dan diaudit.\\n\\nSilakan buka Dashboard.`,
-            { inline_keyboard: [[{ text: '📱 Buka Dashboard', web_app: { url: 'https://abiedienbackoffice.pages.dev' } }]] }
+            { inline_keyboard: [[{ text: '📱 Buka Dashboard', web_app: { url: Deno.env.get('DASHBOARD_URL') || 'https://abiedienbackoffice.pages.dev' } }]] }
           );
         } catch (e: any) {
           await sendTelegramMessage(botToken, chatId,
