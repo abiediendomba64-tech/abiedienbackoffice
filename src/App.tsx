@@ -438,7 +438,7 @@ export default function App() {
   const [loginDetectionLogs, setLoginDetectionLogs] = useState<LoginDetectionRecord[]>(() => getLoginDetectionLogs());
   const [currentUserRole, setCurrentUserRole] = useState<UserRole>(() => (localStorage.getItem('user_role') as UserRole) || '');
   const [currentUserName, setCurrentUserName] = useState<string>(() => localStorage.getItem('user_name') || 'Abied Iendomba');
-  const [currentUserTelegramId, setCurrentUserTelegramId] = useState<string>(() => localStorage.getItem('user_tg_id') || '7862805424');
+  const [currentUserTelegramId, setCurrentUserTelegramId] = useState<string>(() => localStorage.getItem('user_tg_id') || '');
   // Canonical business identity: public.users.id resolved via verify_member_access().
   // NEVER use telegram_id or auth uid where tickets.user_id/payments.user_id are expected.
   const [currentCanonicalUserId, setCurrentCanonicalUserId] = useState<number | null>(() => {
