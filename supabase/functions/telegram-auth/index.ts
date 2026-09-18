@@ -651,7 +651,7 @@ Deno.serve(async (req: Request) => {
         });
       }
 
-      const canonicalUserId = dashboardAccess?.user_id ?? canonicalUser?.id ?? null;
+      const canonicalUserId = canonicalUser?.id ?? null;
       const telegramId = admin.telegram_id ?? canonicalUser?.telegram_id ?? null;
       const bound = canonicalUserId != null && telegramId != null && dashboardAccess?.user_id === canonicalUserId;
 
