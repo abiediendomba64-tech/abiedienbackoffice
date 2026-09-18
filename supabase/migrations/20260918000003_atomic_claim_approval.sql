@@ -79,7 +79,7 @@ BEGIN
   INSERT INTO public.audit_logs (
     actor_id, actor_role, action_type, resource_type, resource_id, old_value, new_value, reason
   ) VALUES (
-    p_actor_id, p_actor_role, 'APPROVE_CLAIM', 'claims', v_tx_id,
+    p_actor_id, p_actor_role, 'APPROVE_CLAIM', 'claims', NULL,
     jsonb_build_object('claim_id',p_claim_id,'status',v_claim.status),
     jsonb_build_object('claim_id',p_claim_id,'status','approved','payout_amount',v_payout,'transaction_id',v_tx_id), p_notes
   );
