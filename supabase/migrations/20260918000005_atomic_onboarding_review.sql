@@ -1,3 +1,28 @@
+-- Production reconciliation: the canonical onboarding table is present in source history but
+-- is absent from the currently inspected production schema. Keep this guard additive.
+CREATE TABLE IF NOT EXISTS public.member_onboarding_requests (
+  id BIGSERIAL PRIMARY KEY,
+  auth_user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  email VARCHAR(255) NOT NULL,
+  full_name VARCHAR(255) NOT NULL,
+  phone VARCHAR(50),
+  telegram_username VARCHAR(255),
+  status VARCHAR(20) NOT NULL DEFAULT 'PENDING_REVIEW',
+  reviewed_by BIGINT REFERENCES public.users(id) ON DELETE SET NULL,
+  reviewed_at TIMESTAMPTZ,
+  rejection_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT member_onboarding_valid_status CHECK (status IN ('PENDING_REVIEW','APPROVED','REJECTED')),
+  CONSTRAINT member_onboarding_one_pending_per_auth UNIQUE (auth_user_id, status)
+);
+CREATE INDEX IF NOT EXISTS idx_member_onboarding_status ON public.member_onboarding_requests(status, created_at);
+ALTER TABLE public.member_onboarding_requests ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS member_onboarding_insert_own ON public.member_onboarding_requests;
+CREATE POLICY member_onboarding_insert_own ON public.member_onboarding_requests FOR INSERT TO authenticated WITH CHECK (auth_user_id = auth.uid());
+DROP POLICY IF EXISTS member_onboarding_select_own ON public.member_onboarding_requests;
+CREATE POLICY member_onboarding_select_own ON public.member_onboarding_requests FOR SELECT TO authenticated USING (auth_user_id = auth.uid());
+
 -- Atomic member onboarding review. Provisioning occurs only after admin decision
 -- and a canonical Telegram identity can be resolved.
 CREATE OR REPLACE FUNCTION public.review_member_onboarding_atomic(
