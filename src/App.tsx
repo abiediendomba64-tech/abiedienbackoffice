@@ -897,10 +897,25 @@ export default function App() {
   const handleApproveClaim = async (claimId: string) => {
     try {
       await executeAdminAction({ action: 'APPROVE_CLAIM', metadata: { claim_id: claimId } });
-      showToast('Klaim disetujui dan payout tercatat di ledger.', 'success');
+      showToast('Klaim disetujui dan tercatat sebagai payable; transfer bank belum dianggap selesai.', 'success');
       await load();
     } catch (err: any) {
       showToast(`Approval klaim gagal: ${err.message}`, 'error');
+    }
+  };
+
+  const handleSettleClaim = async (claimId: string) => {
+    const providerReference = window.prompt('Masukkan referensi transfer bank/provider:')?.trim();
+    if (!providerReference) return;
+    try {
+      await executeAdminAction({
+        action: 'SETTLE_CLAIM',
+        metadata: { claim_id: claimId, provider_reference: providerReference }
+      });
+      showToast('Payout ditandai settled berdasarkan referensi transfer.', 'success');
+      await load();
+    } catch (err: any) {
+      showToast(`Settlement payout gagal: ${err.message}`, 'error');
     }
   };
 
@@ -1535,6 +1550,7 @@ export default function App() {
                       exportCSV={() => showToast('Export CSV berhasil', 'success')} 
                       onSelect={setSelected}
                       onApproveClaim={handleApproveClaim}
+                      onSettleClaim={handleSettleClaim}
                     />
                   )}
 
@@ -3305,7 +3321,7 @@ function TicketsListView({
   );
 }
 
-function PaymentsLedgerView({ payments, claims = [], paymentStart, setPaymentStart, paymentEnd, setPaymentEnd, exportCSV, onSelect, onApproveClaim }: any) {
+function PaymentsLedgerView({ payments, claims = [], paymentStart, setPaymentStart, paymentEnd, setPaymentEnd, exportCSV, onSelect, onApproveClaim, onSettleClaim }: any) {
   return (
     <div className="space-y-4 animate-fade-in">
       <div className="glass-card p-3 sm:p-4 rounded-2xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
@@ -3326,7 +3342,7 @@ function PaymentsLedgerView({ payments, claims = [], paymentStart, setPaymentSta
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-extrabold text-white">Klaim Gaji — Review & Payout</h3>
-              <p className="text-[11px] text-slate-400">Approval memakai transaksi payout + double-entry ledger atomik.</p>
+              <p className="text-[11px] text-slate-400">Approval membukukan payable. Settlement terpisah setelah ada referensi transfer bank/provider.</p>
             </div>
             <span className="text-xs font-bold text-amber-300">{claims.filter((x:any) => ['pending','reviewing'].includes(x.status)).length} pending</span>
           </div>
@@ -3339,7 +3355,12 @@ function PaymentsLedgerView({ payments, claims = [], paymentStart, setPaymentSta
                   <div className="text-xs text-emerald-300 font-mono-code mt-1">Payout: IDR {Number(cl.payout_amount || 0).toLocaleString('id-ID')}</div>
                 </div>
                 {['pending','reviewing'].includes(cl.status) ? (
-                  <button onClick={() => onApproveClaim(String(cl.id))} className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold">Approve & Post Ledger</button>
+                  <button onClick={() => onApproveClaim(String(cl.id))} className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold">Approve & Post Payable</button>
+                ) : cl.status === 'approved' ? (
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={cl.status} />
+                    <button onClick={() => onSettleClaim(String(cl.id))} className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold">Settle Transfer</button>
+                  </div>
                 ) : (
                   <StatusBadge status={cl.status} />
                 )}
