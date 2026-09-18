@@ -1524,6 +1524,7 @@ export default function App() {
               {workspace === 'web_apps' && (
                 <>
                   {webTab === 'overview' && (
+                    <>
                     <TelegramBindingCard
                       role={currentUserRole}
                       binding={telegramBinding}
@@ -1541,6 +1542,7 @@ export default function App() {
                       onOpenLoginLogs={() => { setLoginDetectionLogs(getLoginDetectionLogs()); setLoginInspectorModalOpen(true); }}
                       onOpenWhitelist={() => { setConfiguredAdminIds(getConfiguredAdminIds()); setWhitelistModalOpen(true); }}
                     />
+                    </>
                   )}
 
                   {webTab === 'technical_rescue' && (
