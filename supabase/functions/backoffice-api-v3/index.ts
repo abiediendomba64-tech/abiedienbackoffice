@@ -837,6 +837,30 @@ Deno.serve(async (req: Request) => {
         }
       }
 
+      // CLAIM REJECTION -> atomic status/audit/notification, with no payout transaction or ledger entry.
+      if (action === 'REJECT_CLAIM') {
+        if (!await can(a, 'payment.manage')) {
+          return wrap(json({ error: 'forbidden', message: 'Anda tidak memiliki izin menolak payout klaim.' }, 403), req);
+        }
+        const claimId = String(b.metadata?.claim_id || b.claim_id || '').trim();
+        const reason = typeof b.reason === 'string' ? b.reason.trim() : '';
+        if (!claimId || !reason) {
+          return wrap(json({ error: 'invalid_input', message: 'claim_id dan rejection reason wajib diisi.' }, 422), req);
+        }
+        try {
+          const { data, error } = await db.rpc('reject_claim_atomic', {
+            p_claim_id: claimId,
+            p_actor_id: a.access.user_id,
+            p_actor_role: a.access.role,
+            p_rejection_reason: reason
+          });
+          if (error) throw error;
+          return wrap(json({ success: true, data, message: 'Klaim ditolak secara atomik; tidak ada jurnal payout.' }), req);
+        } catch (err: any) {
+          return wrap(json({ error: err.message || 'claim_rejection_failed', message: err.message || 'Penolakan klaim gagal.' }, 400), req);
+        }
+      }
+
       // CLAIM PAYOUT SETTLEMENT -> bank/provider confirmation is a separate phase.
       // Approval never reduces the bank account and never reports a transfer as completed.
       if (action === 'SETTLE_CLAIM') {
