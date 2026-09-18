@@ -221,9 +221,6 @@ BEGIN
   IF v_claim.user_id = p_actor_id THEN
     RAISE EXCEPTION 'Self-disbursement is prohibited for claim %', p_claim_id;
   END IF;
-  IF v_claim.status <> 'approved' THEN
-    RAISE EXCEPTION 'Claim % must be approved before settlement; current status %',p_claim_id,v_claim.status;
-  END IF;
 
   SELECT * INTO v_tx
   FROM public.payment_transactions
@@ -234,6 +231,20 @@ BEGIN
 
   IF v_tx.id IS NULL THEN
     RAISE EXCEPTION 'No payout transaction found for claim %',p_claim_id;
+  END IF;
+
+  -- Idempotent retry: a previously settled claim returns success instead of
+  -- being rejected by the phase guard.
+  IF v_claim.status='settled'
+     AND (COALESCE(v_tx.metadata->>'settlement_status','')='settled' OR v_tx.status='completed') THEN
+    RETURN jsonb_build_object(
+      'success',true,'already_settled',true,'claim_id',p_claim_id,
+      'transaction_id',v_tx.id,'transaction_code',v_tx.transaction_code,'status','completed'
+    );
+  END IF;
+
+  IF v_claim.status <> 'approved' THEN
+    RAISE EXCEPTION 'Claim % must be approved before settlement; current status %',p_claim_id,v_claim.status;
   END IF;
 
   IF COALESCE(v_tx.metadata->>'settlement_status','awaiting_disbursement')='settled'
