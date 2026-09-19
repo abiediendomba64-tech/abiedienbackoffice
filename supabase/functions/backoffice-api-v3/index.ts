@@ -563,7 +563,7 @@ Deno.serve(async (req: Request) => {
       if (!bank || !account || !fileName) {
         return wrap(json({ error: 'invalid_input', message: 'Bank, nomor rekening, dan bukti klaim wajib diisi.' }, 422), req);
       }
-      if (!/^\\d+\\//.test(fileName) || !fileName.startsWith(`${a.access.user_id}/`)) {
+      if (!/^\d+\//.test(fileName) || !fileName.startsWith(`${a.access.user_id}/`)) {
         return wrap(json({ error: 'invalid_evidence_path', message: 'Lokasi bukti klaim tidak sesuai dengan identitas member.' }, 422), req);
       }
       try {
