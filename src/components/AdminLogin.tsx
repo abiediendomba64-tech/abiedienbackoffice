@@ -92,6 +92,8 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateToM
   }, [onSuccess]);
 
   useEffect(() => {
+    let isMounted = true;
+
     (window as any).onTelegramAuth = async (tgPayload: any) => {
       setLoading(true);
       setErrorMessage(null);
