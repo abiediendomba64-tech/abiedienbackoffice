@@ -950,10 +950,10 @@ Deno.serve(async (req: Request) => {
           return wrap(json({
             success: true,
             data: rpcResponse,
-            message: \`\${action} success\`
+            message: `${action} success`
           }), req);
         } catch (err: any) {
-          console.error(\`[\${action}] Error:\`, err);
+          console.error(`[${action}] Error:`, err);
           const message = err?.message || 'Gagal memproses pembayaran.';
           const status = String(message).startsWith('UNAUTHORIZED_ACTOR:')
             ? 403
