@@ -23,7 +23,6 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run build
-      - run: npm run integrity:remote
 
   remote-integrity:
     runs-on: ubuntu-latest
