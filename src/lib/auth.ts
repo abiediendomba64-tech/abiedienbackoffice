@@ -337,6 +337,7 @@ async function telegramBindingRequest<T>(path: string, body: Record<string, any>
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      apikey: supabaseAnonKey,
       Authorization: `Bearer ${session.access_token}`,
     },
     body: JSON.stringify(body),
