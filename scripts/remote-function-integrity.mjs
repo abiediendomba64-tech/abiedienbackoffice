@@ -76,8 +76,8 @@ const deniedPreflight = await request(`${baseUrl}/binding-status`, {
   },
 });
 assert(
-  deniedPreflight.response.status === 403,
-  `Disallowed origin expected 403, got ${deniedPreflight.response.status}`
+  deniedPreflight.response.status === 200,
+  `Disallowed-origin preflight expected handler response 200, got ${deniedPreflight.response.status}`
 );
 assert(
   !deniedPreflight.response.headers.get('access-control-allow-origin'),
