@@ -108,7 +108,7 @@ import { CloudflareAnalyticsDashboard } from './components/CloudflareAnalyticsDa
 import { AdminLogin } from './components/AdminLogin';
 import { MemberLogin } from './components/MemberLogin';
 import { ResetPasswordPage } from './components/ResetPasswordPage';
-import { verifyAdminAccess, verifyMemberAccess, signOut as authSignOut } from './lib/auth';
+import { verifyAdminAccess, verifyMemberAccess, signOut as authSignOut, getTelegramBindingStatus, bindCurrentAdminToTelegramInitData, createTelegramBindChallenge, getTelegramWebAppInitData } from './lib/auth';
 import { supabase, supabaseUrl, supabaseAnonKey } from './lib/supabase';
 
 declare global {
@@ -409,6 +409,8 @@ export default function App() {
   const [users, setUsers] = useState<User[]>([]); 
   const [tickets, setTickets] = useState<Ticket[]>([]); 
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [claims, setClaims] = useState<any[]>([]);
+  const [onboardingRequests, setOnboardingRequests] = useState<any[]>([]);
   const [forumTopics, setForumTopics] = useState<any[]>([]);
   const [loading, setLoading] = useState(true); 
   const [error, setError] = useState(''); 
@@ -436,13 +438,22 @@ export default function App() {
   const [loginDetectionLogs, setLoginDetectionLogs] = useState<LoginDetectionRecord[]>(() => getLoginDetectionLogs());
   const [currentUserRole, setCurrentUserRole] = useState<UserRole>(() => (localStorage.getItem('user_role') as UserRole) || '');
   const [currentUserName, setCurrentUserName] = useState<string>(() => localStorage.getItem('user_name') || 'Abied Iendomba');
-  const [currentUserTelegramId, setCurrentUserTelegramId] = useState<string>(() => localStorage.getItem('user_tg_id') || '7862805424');
+  const [currentUserTelegramId, setCurrentUserTelegramId] = useState<string>(() => localStorage.getItem('user_tg_id') || '');
   // Canonical business identity: public.users.id resolved via verify_member_access().
   // NEVER use telegram_id or auth uid where tickets.user_id/payments.user_id are expected.
   const [currentCanonicalUserId, setCurrentCanonicalUserId] = useState<number | null>(() => {
     const raw = localStorage.getItem('user_canonical_id');
     return raw ? Number(raw) : null;
   });
+  const [telegramBinding, setTelegramBinding] = useState<{
+    bound: boolean;
+    canonical_user_id?: number | null;
+    telegram_id?: number | null;
+    role?: string;
+    email?: string | null;
+    error?: string;
+  }>({ bound: false });
+  const [telegramBindingLoading, setTelegramBindingLoading] = useState(false);
   const [domainOrders, setDomainOrders] = useState<DomainOrderRequest[]>([]);
   const [memberInventories, setMemberInventories] = useState<MemberDomainInventory[]>([]);
   const [technicalCases, setTechnicalCases] = useState<TechnicalCase[]>([]);
@@ -693,6 +704,33 @@ export default function App() {
     setTimeout(() => setToast(null), 4000);
   };
 
+  const refreshTelegramBinding = async () => {
+    if (!authenticated || !['super_admin', 'admin', 'dev'].includes(currentUserRole)) return;
+    setTelegramBindingLoading(true);
+    try {
+      const status = await getTelegramBindingStatus();
+      setTelegramBinding(status);
+      if (status.bound && status.canonical_user_id != null) {
+        setCurrentCanonicalUserId(status.canonical_user_id);
+        localStorage.setItem('user_canonical_id', String(status.canonical_user_id));
+      }
+      if (status.telegram_id != null) {
+        setCurrentUserTelegramId(String(status.telegram_id));
+        localStorage.setItem('user_tg_id', String(status.telegram_id));
+      }
+    } catch (e: any) {
+      setTelegramBinding({ bound: false, error: e?.message || 'Status binding tidak dapat dibaca.' });
+    } finally {
+      setTelegramBindingLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (authenticated && ['super_admin', 'admin', 'dev'].includes(currentUserRole)) {
+      void refreshTelegramBinding();
+    }
+  }, [authenticated, currentUserRole]);
+
   const load = async () => { 
     setLoading(true); 
     setError(''); 
@@ -728,18 +766,22 @@ export default function App() {
         return;
       }
 
-      const [s, u, t, p, f] = await Promise.all([
+      const [s, u, t, p, f, cl, onb] = await Promise.all([
         api<Stats>('/stats'),
         api<User[]>('/users'),
         api<Ticket[]>('/tickets'),
         api<Payment[]>('/payments'),
-        api<any[]>('/forum-topics').catch(() => [])
+        api<any[]>('/forum-topics').catch(() => []),
+        api<any[]>('/claims').catch(() => []),
+        api<any[]>('/onboarding-requests').catch(() => [])
       ]); 
       setStats(s); 
       setUsers(u); 
       setTickets(t); 
       setPayments(p); 
       setForumTopics(f);
+      setClaims(cl);
+      setOnboardingRequests(onb);
     } catch (e: any) { 
       setError(e?.message || 'Backend belum tersedia'); 
     } finally { 
@@ -886,6 +928,43 @@ export default function App() {
     link.click();
     document.body.removeChild(link);
     showToast('Laporan tiket berhasil diunduh (CSV)', 'success');
+  };
+
+  const handleApproveClaim = async (claimId: string) => {
+    try {
+      await executeAdminAction({ action: 'APPROVE_CLAIM', metadata: { claim_id: claimId } });
+      showToast('Klaim disetujui dan tercatat sebagai payable; transfer bank belum dianggap selesai.', 'success');
+      await load();
+    } catch (err: any) {
+      showToast(`Approval klaim gagal: ${err.message}`, 'error');
+    }
+  };
+
+  const handleRejectClaim = async (claimId: string) => {
+    const reason = window.prompt('Alasan penolakan klaim (wajib):')?.trim();
+    if (!reason) return;
+    try {
+      await executeAdminAction({ action: 'REJECT_CLAIM', reason, metadata: { claim_id: claimId } });
+      showToast('Klaim ditolak; tidak ada payout/ledger yang dibuat.', 'success');
+      await load();
+    } catch (err: any) {
+      showToast(`Penolakan klaim gagal: ${err.message}`, 'error');
+    }
+  };
+
+  const handleSettleClaim = async (claimId: string) => {
+    const providerReference = window.prompt('Masukkan referensi transfer bank/provider:')?.trim();
+    if (!providerReference) return;
+    try {
+      await executeAdminAction({
+        action: 'SETTLE_CLAIM',
+        metadata: { claim_id: claimId, provider_reference: providerReference }
+      });
+      showToast('Payout ditandai settled berdasarkan referensi transfer.', 'success');
+      await load();
+    } catch (err: any) {
+      showToast(`Settlement payout gagal: ${err.message}`, 'error');
+    }
   };
 
   const filteredPayments = useMemo(() => payments.filter(p => {
@@ -1445,6 +1524,14 @@ export default function App() {
               {workspace === 'web_apps' && (
                 <>
                   {webTab === 'overview' && (
+                    <>
+                    <TelegramBindingCard
+                      role={currentUserRole}
+                      binding={telegramBinding}
+                      loading={telegramBindingLoading}
+                      onBindingComplete={() => { void refreshTelegramBinding(); }}
+                      onToast={showToast}
+                    />
                     <OverviewView 
                       stats={stats} 
                       users={users} 
@@ -1455,6 +1542,7 @@ export default function App() {
                       onOpenLoginLogs={() => { setLoginDetectionLogs(getLoginDetectionLogs()); setLoginInspectorModalOpen(true); }}
                       onOpenWhitelist={() => { setConfiguredAdminIds(getConfiguredAdminIds()); setWhitelistModalOpen(true); }}
                     />
+                    </>
                   )}
 
                   {webTab === 'technical_rescue' && (
@@ -1490,7 +1578,7 @@ export default function App() {
                   )}
 
                   {webTab === 'requests' && (
-                    <RequestsOpsView tickets={tickets} onSelect={setSelected} />
+                    <RequestsOpsView tickets={tickets} onboardingRequests={onboardingRequests} onRefresh={load} onSelect={setSelected} />
                   )}
 
                   {webTab === 'tickets' && (
@@ -1511,12 +1599,16 @@ export default function App() {
                   {webTab === 'payments' && (
                     <PaymentsLedgerView 
                       payments={filteredPayments} 
+                      claims={claims}
                       paymentStart={paymentStart} 
                       setPaymentStart={setPaymentStart} 
                       paymentEnd={paymentEnd} 
                       setPaymentEnd={setPaymentEnd} 
                       exportCSV={() => showToast('Export CSV berhasil', 'success')} 
-                      onSelect={setSelected} 
+                      onSelect={setSelected}
+                      onApproveClaim={handleApproveClaim}
+                      onRejectClaim={handleRejectClaim}
+                      onSettleClaim={handleSettleClaim}
                     />
                   )}
 
@@ -1630,7 +1722,9 @@ export default function App() {
           <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm animate-fade-in" onClick={() => setSelected(null)} />
           <DetailDrawer 
             data={selected} 
-            close={() => setSelected(null)} 
+            close={() => setSelected(null)}
+            isTelegramBound={telegramBinding.bound}
+
             onMutateSuccess={(msg) => { showToast(msg, 'success'); load(); }}
           />
         </>
@@ -1718,6 +1812,119 @@ export default function App() {
 // ==========================================
 // SUB-VIEWS: WEB APPS
 // ==========================================
+
+function TelegramBindingCard({
+  role,
+  binding,
+  loading,
+  onBindingComplete,
+  onToast,
+}: {
+  role: UserRole;
+  binding: { bound: boolean; canonical_user_id?: number | null; telegram_id?: number | null; role?: string; email?: string | null; error?: string };
+  loading: boolean;
+  onBindingComplete: () => void;
+  onToast: (message: string, type?: 'success' | 'error') => void;
+}) {
+  const [working, setWorking] = useState(false);
+  const [deepLink, setDeepLink] = useState<string | null>(null);
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
+  const isMiniApp = Boolean(getTelegramWebAppInitData());
+
+  useEffect(() => {
+    if (!expiresAt) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [expiresAt]);
+
+  useEffect(() => {
+    if (!deepLink) return;
+    const poll = window.setInterval(() => onBindingComplete(), 3000);
+    return () => window.clearInterval(poll);
+  }, [deepLink, onBindingComplete]);
+
+  if (!['super_admin', 'admin', 'dev'].includes(role) || binding.bound) {
+    return binding.bound ? (
+      <div className="p-3 sm:p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-xl bg-emerald-500/15 flex items-center justify-center shrink-0"><ShieldCheck size={18} className="text-emerald-400" /></div>
+          <div className="min-w-0">
+            <div className="text-xs font-black text-emerald-200">Telegram Terhubung</div>
+            <div className="text-[11px] text-emerald-300/70 truncate">Canonical User #{binding.canonical_user_id ?? '-'} · Telegram ID {binding.telegram_id ?? '-'}</div>
+          </div>
+        </div>
+        <span className="text-[10px] font-bold text-emerald-300 shrink-0">IDENTITY VERIFIED</span>
+      </div>
+    ) : null;
+  }
+
+  const secondsLeft = expiresAt ? Math.max(0, Math.ceil((new Date(expiresAt).getTime() - now) / 1000)) : 0;
+  const challengeExpired = deepLink && secondsLeft <= 0;
+
+  const handleMiniAppBind = async () => {
+    setWorking(true);
+    try {
+      const result = await bindCurrentAdminToTelegramInitData();
+      if (!result.bound) throw new Error(result.error || 'Binding Telegram gagal.');
+      setDeepLink(null);
+      onToast('Identitas Telegram berhasil dihubungkan secara sah.', 'success');
+      onBindingComplete();
+    } catch (e: any) {
+      onToast(e?.message || 'Binding Telegram gagal.', 'error');
+    } finally { setWorking(false); }
+  };
+
+  const handleChallenge = async () => {
+    setWorking(true);
+    try {
+      const result = await createTelegramBindChallenge();
+      if (!result.created || !result.deep_link) throw new Error(result.error || 'Gagal membuat challenge Telegram.');
+      setDeepLink(result.deep_link);
+      setExpiresAt(result.expires_at || new Date(Date.now() + 600000).toISOString());
+      window.open(result.deep_link, '_blank', 'noopener,noreferrer');
+      onToast('Tautan verifikasi Telegram dibuat. Selesaikan verifikasi sebelum token kedaluwarsa.', 'success');
+    } catch (e: any) {
+      onToast(e?.message || 'Gagal membuat challenge Telegram.', 'error');
+    } finally { setWorking(false); }
+  };
+
+  return (
+    <div className="p-4 sm:p-5 rounded-2xl bg-amber-950/40 border border-amber-500/30 shadow-glow-amber">
+      <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+        <div className="flex items-start gap-3 min-w-0">
+          <div className="p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/20 shrink-0"><ShieldAlert size={20} className="text-amber-300" /></div>
+          <div className="min-w-0">
+            <h3 className="text-sm sm:text-base font-black text-amber-100">Akun {role === 'super_admin' ? 'Super Admin' : 'Operator'} belum terikat ke Telegram</h3>
+            <p className="text-[11px] sm:text-xs text-amber-200/70 mt-1 max-w-2xl">Fitur verifikasi pembayaran & tindakan finansial dikunci sampai kepemilikan akun Telegram dibuktikan melalui Mini App initData atau one-time deep link.</p>
+          </div>
+        </div>
+
+        {isMiniApp ? (
+          <button type="button" onClick={handleMiniAppBind} disabled={working || loading} className="w-full lg:w-auto shrink-0 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-2 transition">
+            <Smartphone size={15} />
+            {working ? 'Memverifikasi...' : 'Hubungkan Telegram Sekarang'}
+          </button>
+        ) : !deepLink || challengeExpired ? (
+          <button type="button" onClick={handleChallenge} disabled={working || loading} className="w-full lg:w-auto shrink-0 px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-2 transition">
+            <Bot size={15} />
+            {working ? 'Menyiapkan...' : 'Hubungkan Telegram'}
+          </button>
+        ) : (
+          <div className="w-full lg:max-w-xl rounded-xl bg-black/30 border border-white/10 p-3 space-y-2">
+            <div className="text-[11px] text-slate-300">Buka tautan berikut dari Telegram menggunakan akun yang ingin diikat:</div>
+            <a href={deepLink} target="_blank" rel="noreferrer" className="text-xs text-blue-300 hover:text-blue-200 underline break-all">{deepLink}</a>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-white/10 text-[10px] text-slate-400">
+              <span>Token berlaku {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}</span>
+              <button type="button" onClick={onBindingComplete} className="text-cyan-300 hover:underline font-bold">Saya sudah verifikasi — refresh</button>
+            </div>
+          </div>
+        )}
+      </div>
+      {binding.error && !binding.bound && <div className="mt-3 text-[10px] text-rose-300">Status binding: {binding.error}</div>}
+    </div>
+  );
+}
 
 function OverviewView({ 
   stats, 
@@ -2356,25 +2563,37 @@ function MembersView({ users: initialUsers, memberQuery, setMemberQuery, onSelec
     setLocalUsers(initialUsers);
   }, [initialUsers]);
 
-  const handleApproveUser = (userId: number, e: React.MouseEvent) => {
+  const handleApproveUser = async (userId: number, e: React.MouseEvent) => {
     e.stopPropagation();
-    setLocalUsers(prev => prev.map(u => u.id === userId ? { ...u, status: 'active', domain_verified: true, role: 'member' } : u));
     const target = localUsers.find(u => u.id === userId);
-    alert(`✅ ACC BERHASIL: Akun ${target?.full_name || `@${target?.username}`} telah disetujui sebagai Member Aktif. DNS Domain & Routing Anycast telah diaktifkan.`);
+    if (!target) return;
+    try {
+      await executeAdminAction({ action: 'APPROVE_MEMBER', metadata: { user_id: userId } });
+      setLocalUsers(prev => prev.map(u => u.id === userId ? { ...u, status: 'active', role: 'member' } : u));
+      alert(`✅ ACC BERHASIL: Akun ${target.full_name || `@${target.username}`} telah disetujui sebagai Member Aktif.`);
+    } catch (err: any) {
+      alert(`❌ ACC gagal: ${err?.message || 'Perubahan tidak tersimpan di server.'}`);
+    }
   };
 
-  const handleSuspendUser = (userId: number, e: React.MouseEvent) => {
+  const handleSuspendUser = async (userId: number, e: React.MouseEvent) => {
     e.stopPropagation();
-    setLocalUsers(prev => prev.map(u => u.id === userId ? { ...u, status: 'suspended', domain_verified: false } : u));
-    alert(`⛔ Akun #${userId} telah disuspend.`);
+    try {
+      await executeAdminAction({ action: 'SUSPEND_MEMBER', metadata: { user_id: userId } });
+      setLocalUsers(prev => prev.map(u => u.id === userId ? { ...u, status: 'suspended' } : u));
+      alert(`⛔ Akun #${userId} telah disuspend.`);
+    } catch (err: any) {
+      alert(`❌ Suspend gagal: ${err?.message || 'Perubahan tidak tersimpan di server.'}`);
+    }
   };
 
   const filtered = useMemo(() => {
     return localUsers.filter(u => {
       const q = memberQuery.toLowerCase();
       const matchesText = !memberQuery || (u.full_name || '').toLowerCase().includes(q) || (u.username || '').toLowerCase().includes(q) || (u.domain_name || '').toLowerCase().includes(q);
-      const isPending = u.status === 'pending' || u.status === 'pending_review' || !u.domain_verified;
-      const isActive = u.status === 'active' && u.domain_verified;
+      // Membership state is independent from domain verification. A member can be active while DNS/domain onboarding is still pending.
+      const isPending = u.status === 'pending' || u.status === 'pending_review';
+      const isActive = u.status === 'active';
       const isSuspended = u.status === 'suspended' || u.status === 'blocked';
 
       if (statusFilter === 'pending') return matchesText && isPending;
@@ -2384,8 +2603,8 @@ function MembersView({ users: initialUsers, memberQuery, setMemberQuery, onSelec
     });
   }, [localUsers, memberQuery, statusFilter]);
 
-  const pendingCount = localUsers.filter(u => u.status === 'pending' || u.status === 'pending_review' || !u.domain_verified).length;
-  const activeCount = localUsers.filter(u => u.status === 'active' && u.domain_verified).length;
+  const pendingCount = localUsers.filter(u => u.status === 'pending' || u.status === 'pending_review').length;
+  const activeCount = localUsers.filter(u => u.status === 'active').length;
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -2470,18 +2689,18 @@ function MembersView({ users: initialUsers, memberQuery, setMemberQuery, onSelec
               </span>
             </div>
             <span className="text-[10px] text-slate-400 block">
-              DNS: {u.domain_verified ? '✅ TXT Terverifikasi' : '⏳ Belum di-ACC'}
+              DNS: {u.domain_verified ? '✅ TXT Terverifikasi' : '⏳ Belum diverifikasi'}
             </span>
           </div>,
           <StatusBadge key={`status-${u.id}`} status={u.status || 'pending'} />,
           <div key={`act-${u.id}`} className="flex items-center gap-1.5">
-            {u.status !== 'active' || !u.domain_verified ? (
+            {u.status !== 'active' ? (
               <button
                 onClick={(e) => handleApproveUser(u.id, e)}
                 className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold transition cursor-pointer shadow-glow-emerald"
-                title="Setujui Akun dan Aktifkan DNS Domain"
+                title="Setujui dan aktifkan akun member"
               >
-                ACC & Aktifkan
+                ACC & Aktifkan Member
               </button>
             ) : (
               <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
@@ -3073,13 +3292,29 @@ function DomainsView({ domains, onSelect }: { domains: any[]; onSelect: (v: any)
   );
 }
 
-function RequestsOpsView({ tickets, onSelect }: { tickets: Ticket[]; onSelect: (v: any) => void }) {
+function RequestsOpsView({ tickets, onboardingRequests = [], onRefresh, onSelect }: { tickets: Ticket[]; onboardingRequests?: any[]; onRefresh: () => Promise<void>; onSelect: (v: any) => void }) {
   const opTickets = useMemo(() => {
     return tickets.filter(t => [
       'push_request', 'cdn_request', 'redirect_request', 'domain_request', 
       'seo_audit', 'web_update', 'ownership_transfer'
     ].includes(t.category));
   }, [tickets]);
+
+  const pendingOnboarding = onboardingRequests.filter((r: any) => r.status === 'PENDING_REVIEW');
+  const decideOnboarding = async (requestId: number, decision: 'APPROVED' | 'REJECTED') => {
+    let rejection_reason = '';
+    if (decision === 'REJECTED') {
+      rejection_reason = window.prompt('Alasan penolakan wajib diisi:')?.trim() || '';
+      if (!rejection_reason) return;
+    }
+    try {
+      await api('/admin/onboarding/decision', { method: 'POST', body: JSON.stringify({ request_id: requestId, decision, rejection_reason }) });
+      await onRefresh();
+      window.alert(decision === 'APPROVED' ? 'Onboarding disetujui.' : 'Onboarding ditolak.');
+    } catch (err: any) {
+      window.alert(err?.message || 'Keputusan onboarding gagal.');
+    }
+  };
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -3096,6 +3331,29 @@ function RequestsOpsView({ tickets, onSelect }: { tickets: Ticket[]; onSelect: (
         <span className="px-3 py-1 rounded-xl bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 text-xs font-bold shrink-0">
           {opTickets.length} Request Aktif
         </span>
+      </div>
+
+      <div className="glass-card p-4 rounded-2xl border border-amber-500/20 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h4 className="text-sm font-extrabold text-white">Member Onboarding Review</h4>
+            <p className="text-[11px] text-slate-400">Approval atomik: request + canonical users + Telegram link + audit + notification queue.</p>
+          </div>
+          <span className="text-xs font-bold text-amber-300">{pendingOnboarding.length} pending</span>
+        </div>
+        {pendingOnboarding.length === 0 ? <div className="text-xs text-slate-500">Tidak ada pengajuan onboarding yang menunggu review.</div> :
+          pendingOnboarding.slice(0,50).map((r:any) => (
+            <div key={r.id} className="p-3 rounded-xl bg-black/20 border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-bold text-white">{r.full_name} · {r.email}</div>
+                <div className="text-[11px] text-slate-400">Telegram: @{r.telegram_username || 'belum terhubung'} · Diajukan {formatDateTime(r.created_at)}</div>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => decideOnboarding(r.id,'APPROVED')} className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold">Approve</button>
+                <button onClick={() => decideOnboarding(r.id,'REJECTED')} className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold">Reject</button>
+              </div>
+            </div>
+          ))}
       </div>
 
       <ResponsiveDataList 
@@ -3236,7 +3494,7 @@ function TicketsListView({
   );
 }
 
-function PaymentsLedgerView({ payments, paymentStart, setPaymentStart, paymentEnd, setPaymentEnd, exportCSV, onSelect }: any) {
+function PaymentsLedgerView({ payments, claims = [], paymentStart, setPaymentStart, paymentEnd, setPaymentEnd, exportCSV, onSelect, onApproveClaim, onRejectClaim, onSettleClaim }: any) {
   return (
     <div className="space-y-4 animate-fade-in">
       <div className="glass-card p-3 sm:p-4 rounded-2xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
@@ -3251,6 +3509,42 @@ function PaymentsLedgerView({ payments, paymentStart, setPaymentStart, paymentEn
           <span>Export CSV</span>
         </button>
       </div>
+
+      {claims.length > 0 && (
+        <div className="glass-card p-4 rounded-2xl space-y-3 border border-amber-500/20">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-extrabold text-white">Klaim Gaji — Review & Payout</h3>
+              <p className="text-[11px] text-slate-400">Approval membukukan payable. Settlement terpisah setelah ada referensi transfer bank/provider.</p>
+            </div>
+            <span className="text-xs font-bold text-amber-300">{claims.filter((x:any) => ['pending','reviewing'].includes(x.status)).length} pending</span>
+          </div>
+          <div className="space-y-2">
+            {claims.slice(0,50).map((cl:any) => (
+              <div key={cl.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-black/20 border border-white/5">
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-white">{cl.claim_number || cl.id}</div>
+                  <div className="text-[11px] text-slate-400">{cl.bank || '-'} · {cl.account_number || '-'} · {cl.status}</div>
+                  <div className="text-xs text-emerald-300 font-mono-code mt-1">Payout: IDR {Number(cl.payout_amount || 0).toLocaleString('id-ID')}</div>
+                </div>
+                {['pending','reviewing'].includes(cl.status) ? (
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => onApproveClaim(String(cl.id))} className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold">Approve & Post Payable</button>
+                    <button onClick={() => onRejectClaim(String(cl.id))} className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold">Reject</button>
+                  </div>
+                ) : cl.status === 'approved' ? (
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={cl.status} />
+                    <button onClick={() => onSettleClaim(String(cl.id))} className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold">Settle Transfer</button>
+                  </div>
+                ) : (
+                  <StatusBadge status={cl.status} />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <ResponsiveDataList 
         title="Ledger Payroll & Pembayaran" 
@@ -6235,7 +6529,7 @@ function TelegramBotSimulator() {
 // ==========================================
 // RESPONSIVE DETAIL DRAWER (Category-Aware Action Inspector)
 // ==========================================
-function DetailDrawer({ data, close, onMutateSuccess }: { data: any; close: () => void; onMutateSuccess: (msg: string) => void }) {
+function DetailDrawer({ data, close, onMutateSuccess, isTelegramBound }: { data: any; close: () => void; onMutateSuccess: (msg: string) => void; isTelegramBound: boolean }) {
   const [replyMessage, setReplyMessage] = useState('');
   const [resolutionNotes, setResolutionNotes] = useState('');
   const [busy, setBusy] = useState(false);
@@ -6788,7 +7082,8 @@ function DetailDrawer({ data, close, onMutateSuccess }: { data: any; close: () =
                 <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-300 block">💳 Verifikasi Tiket Billing</span>
                 <div className="grid grid-cols-2 gap-2">
                   <button
-                    disabled={busy}
+                    disabled={busy || !isTelegramBound}
+                    title={!isTelegramBound ? 'Wajib menghubungkan Telegram terlebih dahulu.' : undefined}
                     onClick={() => openConfirm(
                       'Verifikasi Pembayaran Tiket',
                       `Setujui dan verifikasi mutasi pembayaran pada tiket #${data.ticket_number}?`,
@@ -6806,7 +7101,8 @@ function DetailDrawer({ data, close, onMutateSuccess }: { data: any; close: () =
                   </button>
 
                   <button
-                    disabled={busy}
+                    disabled={busy || !isTelegramBound}
+                    title={!isTelegramBound ? 'Wajib menghubungkan Telegram terlebih dahulu.' : undefined}
                     onClick={() => openConfirm(
                       'Tolak Pembayaran Tiket',
                       `Tolak bukti pembayaran pada tiket #${data.ticket_number}?`,
@@ -6890,10 +7186,16 @@ function DetailDrawer({ data, close, onMutateSuccess }: { data: any; close: () =
               </span>
             </div>
 
+            {!isTelegramBound && data.status !== 'verified' && (
+              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-200 text-[11px] font-semibold">
+                🔒 Wajib menghubungkan Telegram terlebih dahulu. Verifikasi dan penolakan pembayaran dikunci sampai identitas operator terikat.
+              </div>
+            )}
             {data.status !== 'verified' ? (
               <div className="space-y-2">
                 <button 
-                  disabled={busy} 
+                  disabled={busy || !isTelegramBound} 
+                  title={!isTelegramBound ? 'Wajib menghubungkan Telegram terlebih dahulu.' : undefined}
                   onClick={() => openConfirm(
                     'Verifikasi Pembayaran',
                     `Verifikasi pembayaran nomor #${data.payment_number || data.id} senilai ${data.currency || 'IDR'} ${Number(data.amount).toLocaleString('id-ID')}?`,
@@ -6911,7 +7213,8 @@ function DetailDrawer({ data, close, onMutateSuccess }: { data: any; close: () =
                 </button>
 
                 <button 
-                  disabled={busy} 
+                  disabled={busy || !isTelegramBound} 
+                  title={!isTelegramBound ? 'Wajib menghubungkan Telegram terlebih dahulu.' : undefined}
                   onClick={() => openConfirm(
                     'Tolak Pembayaran',
                     `Tolak bukti pembayaran nomor #${data.payment_number || data.id}?`,
@@ -8157,7 +8460,8 @@ function MemberPortalView({ name, telegramId, canonicalUserId, tickets: initialT
   const [claimBank, setClaimBank] = useState('BCA');
   const [claimAccount, setClaimAccount] = useState('');
   const [claimDesc, setClaimDesc] = useState('');
-  const [claimAttachment, setClaimAttachment] = useState<string | null>(null);
+  const [claimAttachment, setClaimAttachment] = useState<File | null>(null);
+  const [claimAttachmentPreview, setClaimAttachmentPreview] = useState<string>('');
   const [claimAttachmentName, setClaimAttachmentName] = useState<string>('');
   const [claimAttachmentSize, setClaimAttachmentSize] = useState<string>('');
   const [claimSubmitting, setClaimSubmitting] = useState(false);
@@ -8271,71 +8575,58 @@ function MemberPortalView({ name, telegramId, canonicalUserId, tickets: initialT
     setClaimAttachmentName(file.name);
     setClaimAttachmentSize((file.size / 1024).toFixed(1) + ' KB');
 
+    setClaimAttachment(file);
     const reader = new FileReader();
-    reader.onload = (event) => {
-      setClaimAttachment(event.target?.result as string);
-      showToast(`File ${file.name} berhasil dilampirkan.`, 'success');
-    };
+    reader.onload = () => setClaimAttachmentPreview(typeof reader.result === 'string' ? reader.result : '');
     reader.readAsDataURL(file);
+    showToast(`File ${file.name} siap diunggah ke storage saat klaim dikirim.`, 'success');
   };
 
-  // Handle Submit Claim Gaji (75% System)
+  // Handle Submit Claim Gaji (75% System) — real claims table + claim-evidence storage.
   const handleSubmitClaim = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!claimAmount || !claimAccount) {
-      showToast('Harap lengkapi nominal dan nomor rekening!', 'error');
+    if (!claimAmount || !claimAccount || !claimAttachment) {
+      showToast('Nominal, rekening, dan bukti klaim wajib dilengkapi.', 'error');
       return;
     }
 
     const amount = Number(claimAmount);
-    const claim75Percent = Math.floor(amount * 0.75);
-    const platformFee = amount - claim75Percent;
-    const ticketNumber = `CLAIM-${Math.floor(100000 + Math.random() * 900000)}`;
-    const notes = `Klaim gaji dengan sistem 75%. Total: Rp ${amount.toLocaleString('id-ID')}, Diterima (75%): Rp ${claim75Percent.toLocaleString('id-ID')}, Platform Fee (25%): Rp ${platformFee.toLocaleString('id-ID')}. Bank: ${claimBank}, Rekening: ${claimAccount}. Lampiran: ${claimAttachmentName || 'Bukti Screenshot terlampir'}. Deskripsi: ${claimDesc || '-'}`;
-
-    const claimTicketData = {
-      ticket_number: ticketNumber,
-      user_id: canonicalUserId || Number(telegramId) || 0,
-      category: 'payroll_claim',
-      priority: 'high',
-      status: 'pending',
-      title: `Klaim Transfer Gaji (75%): Rp ${claim75Percent.toLocaleString('id-ID')} (${claimBank} - ${claimAccount})`,
-      description: notes,
-      collected_data: {
-        total_amount: amount,
-        claim_amount: claim75Percent,
-        platform_fee: platformFee,
-        bank_name: claimBank,
-        bank_account: claimAccount,
-        attachment_name: claimAttachmentName,
-        description: claimDesc,
-        user_name: name,
-        telegram_id: telegramId
-      }
-    };
+    if (!Number.isFinite(amount) || amount <= 0) {
+      showToast('Nominal klaim tidak valid.', 'error');
+      return;
+    }
 
     setClaimSubmitting(true);
     try {
-      if (canonicalUserId) {
-        const { error } = await supabase.from('tickets').insert([claimTicketData]);
-        if (error) throw error;
-      }
-      setMemberTickets([
-        {
-          id: Date.now(),
-          ...claimTicketData,
-          created_at: new Date().toISOString(),
-          user_name: name,
-          notes
-        },
-        ...memberTickets
-      ]);
+      if (!canonicalUserId) throw new Error('Identitas member canonical belum tersedia. Silakan login ulang.');
+
+      const safeName = claimAttachment.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path = `${canonicalUserId}/${crypto.randomUUID()}-${safeName}`;
+      const upload = await supabase.storage.from('claim-evidence').upload(path, claimAttachment, {
+        contentType: claimAttachment.type || 'application/octet-stream',
+        upsert: false,
+      });
+      if (upload.error) throw new Error(`Upload bukti gagal: ${upload.error.message}`);
+
+      const res = await api<any>('/claims', {
+        method: 'POST',
+        body: JSON.stringify({
+          amount,
+          bank: claimBank,
+          account: claimAccount,
+          description: claimDesc,
+          file_name: path,
+          file_size: String(claimAttachment.size),
+        }),
+      });
+      if (!res?.success) throw new Error(res?.message || res?.error || 'Gagal mengajukan klaim.');
+
       setClaimAmount('');
       setClaimDesc('');
       setClaimAttachment(null);
       setClaimAttachmentName('');
       setClaimAttachmentSize('');
-      showToast(`Klaim gaji berhasil diajukan! Sistem 75%: Rp ${claim75Percent.toLocaleString('id-ID')} akan ditransfer ke rekening Anda.`, 'success');
+      showToast(res.message || 'Klaim gaji berhasil diajukan dan masuk antrean review.', 'success');
       if (onRefresh) onRefresh();
     } catch (err: any) {
       showToast(`Gagal mengajukan klaim: ${err.message}`, 'error');
@@ -8375,37 +8666,26 @@ function MemberPortalView({ name, telegramId, canonicalUserId, tickets: initialT
   const handleCreateTicketSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!ticketTitle.trim()) return;
-    const ticketNumber = `TKT-${Math.floor(100000 + Math.random() * 900000)}`;
-    const ticketData = {
-      ticket_number: ticketNumber,
-      user_id: canonicalUserId || Number(telegramId) || 0,
-      category: ticketCat,
-      priority: ticketPriority,
-      status: 'pending',
-      title: ticketTitle.trim(),
-      description: ticketDesc.trim() || '-',
-      collected_data: { user_name: name, telegram_id: telegramId }
-    };
-
     try {
-      if (canonicalUserId) {
-        const { error } = await supabase.from('tickets').insert([ticketData]);
-        if (error) throw error;
-      }
-      setMemberTickets([
-        {
-          id: Date.now(),
-          ...ticketData,
-          created_at: new Date().toISOString(),
-          user_name: name,
-          notes: ticketDesc
-        },
-        ...memberTickets
+      const res = await api<any>('/tickets', {
+        method: 'POST',
+        body: JSON.stringify({
+          category: ticketCat,
+          priority: ticketPriority,
+          title: ticketTitle.trim(),
+          description: ticketDesc.trim() || '-',
+          collected_data: { user_name: name, telegram_id: telegramId }
+        })
+      });
+      if (!res?.success || !res.ticket) throw new Error(res?.message || res?.error || 'Gagal submit tiket.');
+      setMemberTickets(prev => [
+        { ...res.ticket, user_name: name, notes: ticketDesc },
+        ...prev.filter((t: any) => t.id !== res.ticket.id)
       ]);
       setNewTicketModal(false);
       setTicketTitle('');
       setTicketDesc('');
-      showToast(`Tiket Operasional #${ticketNumber} berhasil disubmit ke antrean admin.`, 'success');
+      showToast(`Tiket resmi #${res.ticket.ticket_number} berhasil disubmit ke antrean admin.`, 'success');
       if (onRefresh) onRefresh();
     } catch (err: any) {
       showToast(`Gagal submit tiket: ${err.message}`, 'error');
@@ -8868,7 +9148,7 @@ function MemberPortalView({ name, telegramId, canonicalUserId, tickets: initialT
 
                 {claimAttachment && (
                   <div className="mt-2 p-2 rounded-xl bg-white/5 border border-white/10 max-h-48 overflow-hidden flex items-center justify-center">
-                    <img src={claimAttachment} alt="Preview Bukti" className="max-h-40 rounded-lg object-contain" />
+                    <img src={claimAttachmentPreview} alt="Preview Bukti" className="max-h-40 rounded-lg object-contain" />
                   </div>
                 )}
               </div>

@@ -477,6 +477,41 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // ============ MEMBER ONBOARDING REVIEW ============
+    if (p === '/onboarding-requests' && req.method === 'GET') {
+      if (!await can(a, 'member.manage')) return wrap(json({ error: 'forbidden' }, 403), req);
+      const { data, error } = await db.from('member_onboarding_requests').select('*').order('created_at', { ascending: false }).limit(200);
+      if (error) return wrap(json({ error: error.message }, 400), req);
+      return wrap(json(data || []), req);
+    }
+
+    if (p === '/admin/onboarding/decision' && req.method === 'POST') {
+      if (!await can(a, 'member.manage')) return wrap(json({ error: 'forbidden' }, 403), req);
+      const b = await req.json();
+      const requestId = Number(b.request_id);
+      const decision = typeof b.decision === 'string' ? b.decision.toUpperCase() : '';
+      const reason = typeof b.rejection_reason === 'string' ? b.rejection_reason.trim() : '';
+      if (!Number.isInteger(requestId) || requestId <= 0 || !['APPROVED','REJECTED'].includes(decision)) {
+        return wrap(json({ error: 'invalid_input', message: 'request_id dan decision tidak valid.' }, 422), req);
+      }
+      if (decision === 'REJECTED' && !reason) {
+        return wrap(json({ error: 'invalid_input', message: 'Alasan penolakan wajib diisi.' }, 422), req);
+      }
+      try {
+        const { data, error } = await db.rpc('review_member_onboarding_atomic', {
+          p_request_id: requestId,
+          p_decision: decision,
+          p_actor_id: a.access.user_id,
+          p_actor_role: a.access.role,
+          p_rejection_reason: reason || null
+        });
+        if (error) throw error;
+        return wrap(json(data || { success: true }), req);
+      } catch (err: any) {
+        return wrap(json({ error: err.message || 'onboarding_review_failed', message: err.message || 'Keputusan onboarding gagal.' }, 409), req);
+      }
+    }
+
     // ============ TICKET CREATION (member + staff) ============
     // Real ticket creation path for member pages (Kendala / Update requests).
     // Gated by ticket.create (granted to member, admin, super_admin in migration 004).
@@ -511,62 +546,47 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // ============ CLAIM / PAYROLL (member) — 75% auto-payout ============
-    // Real claim creation: payout_amount = amount * 0.75.
+    // ============ CLAIM / PAYROLL (member) — real atomic submit ============
     if (p === '/claims' && req.method === 'POST') {
-      if (!await can(a, 'ticket.create')) {
+      if (!await can(a, 'claim.create')) {
         return wrap(json({ error: 'forbidden', message: 'Anda tidak memiliki izin mengajukan klaim.' }, 403), req);
       }
       const body = (await req.json()) as any;
       const amount = Number(body.amount);
-      if (!amount || amount <= 0 || !Number.isFinite(amount)) {
+      if (!Number.isFinite(amount) || amount <= 0) {
         return wrap(json({ error: 'invalid_input', message: 'Nominal klaim tidak valid.' }, 422), req);
       }
-      const payoutAmount = Math.floor(amount * 0.75);
-      const bank = typeof body.bank === 'string' && body.bank.trim() ? body.bank.trim().toUpperCase() : '';
-      const account = typeof body.account === 'string' && body.account.trim() ? body.account.trim() : '';
+      const bank = typeof body.bank === 'string' ? body.bank.trim().toUpperCase() : '';
+      const account = typeof body.account === 'string' ? body.account.trim() : '';
       const description = typeof body.description === 'string' ? body.description.trim() : '';
       const fileName = typeof body.file_name === 'string' ? body.file_name.trim() : '';
-      const fileSize = typeof body.file_size === 'string' ? body.file_size.trim() : '';
-      if (!bank || !account) {
-        return wrap(json({ error: 'invalid_input', message: 'Bank dan nomor rekening wajib diisi.' }, 422), req);
+      if (!bank || !account || !fileName) {
+        return wrap(json({ error: 'invalid_input', message: 'Bank, nomor rekening, dan bukti klaim wajib diisi.' }, 422), req);
+      }
+      if (!/^\d+\//.test(fileName) || !fileName.startsWith(`${a.access.user_id}/`)) {
+        return wrap(json({ error: 'invalid_evidence_path', message: 'Lokasi bukti klaim tidak sesuai dengan identitas member.' }, 422), req);
       }
       try {
-        const tgId = a.access?.telegram_user_id ? Number(a.access.telegram_user_id) : null;
-        const claimNum = 'CLM-' + Date.now().toString(36).toUpperCase();
-        const desc = description || `Klaim transfer gaji sebesar Rp ${amount.toLocaleString('id-ID')}. Payout otomatis 75% = Rp ${payoutAmount.toLocaleString('id-ID')}.`;
-
-        const { data, error } = await db.from('claims').insert([{
-          claim_number: claimNum,
-          submitted_by: a.authUser.id,
-          telegram_user_id: tgId,
-          user_id: a.access.user_id,
-          claim_type: 'salary',
-          amount,
-          payout_amount: payoutAmount,
-          bank,
-          account_number: account,
-          status: 'pending',
-          evidence_required: !!fileName,
-          description: desc,
-          notes: desc,
-          evidence_path: fileName || null,
-          collected_data: {
-            source: 'backoffice_web',
-            file_name: fileName,
-            file_size: fileSize
-          }
-        }]).select('id,claim_number,claim_type,amount,payout_amount,bank,account_number,status,created_at').single();
-        if (error) {
-          return wrap(json({ error: error.message, message: 'Gagal membuat klaim.' }, 400), req);
+        const { data: canonical } = await db.from('users').select('id,telegram_id,auth_user_id,status').eq('id', a.access.user_id).maybeSingle();
+        if (!canonical || canonical.status !== 'active' || !canonical.telegram_id) {
+          return wrap(json({ error: 'member_identity_incomplete', message: 'Identitas Telegram member belum terhubung.' }, 409), req);
         }
-        return wrap(json({
-          success: true,
-          claim: data,
-          message: `Klaim berhasil diajukan. Payout 75% = Rp ${payoutAmount.toLocaleString('id-ID')}.`
-        }, 201), req);
+        const notes = description || `Klaim transfer gaji sebesar Rp ${amount.toLocaleString('id-ID')}.`;
+        const { data, error } = await db.rpc('submit_claim_atomic', {
+          p_telegram_user_id: Number(canonical.telegram_id),
+          p_claim_type: 'salary',
+          p_amount: amount,
+          p_notes: notes,
+          p_evidence_path: fileName,
+          p_submitted_by: a.authUser.id
+        });
+        if (error) throw error;
+        if (!data?.success) {
+          return wrap(json({ error: data?.error_code || 'claim_rejected', message: data?.error_code || 'Klaim tidak dapat diajukan.' }, 409), req);
+        }
+        return wrap(json({ success: true, claim: data, message: 'Klaim berhasil diajukan dan masuk antrean review.' }, 201), req);
       } catch (err: any) {
-        return wrap(json({ error: err.message, message: 'Gagal membuat klaim.' }, 400), req);
+        return wrap(json({ error: err.message || 'claim_submit_failed', message: 'Gagal membuat klaim.' }, 400), req);
       }
     }
 
@@ -765,40 +785,190 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      // VERIFY_PAYMENT / REJECT_PAYMENT -> real payments table mutation + admin notif
-      if (action === 'VERIFY_PAYMENT' || action === 'REJECT_PAYMENT') {
-        const paymentId = Number(b.payment_id || b.paymentId);
-        if (!paymentId) {
-          return wrap(json({ error: 'invalid_input', message: 'payment_id required.' }, 422), req);
+      // MEMBER ACCESS ACTIONS -> canonical public.users mutation + audit.
+      if (action === 'APPROVE_MEMBER' || action === 'SUSPEND_MEMBER') {
+        if (!await can(a, 'member.manage')) {
+          return wrap(json({ error: 'forbidden', message: 'Anda tidak memiliki izin mengelola member.' }, 403), req);
         }
-        const toStatus = action === 'VERIFY_PAYMENT' ? 'verified' : 'rejected';
+        const userId = Number(b.metadata?.user_id || b.user_id);
+        if (!Number.isSafeInteger(userId) || userId <= 0) {
+          return wrap(json({ error: 'invalid_input', message: 'user_id wajib valid.' }, 422), req);
+        }
+        const { data: target, error: targetError } = await db.from('users')
+          .select('id,role,status,domain_verified').eq('id', userId).maybeSingle();
+        if (targetError || !target) return wrap(json({ error: 'not_found', message: 'Member tidak ditemukan.' }, 404), req);
+        if (target.role === 'root' || target.role === 'super_admin') {
+          return wrap(json({ error: 'forbidden', message: 'Akun privileged tidak dapat diproses sebagai member.' }, 403), req);
+        }
+        const next = action === 'APPROVE_MEMBER'
+          ? { status: 'active', role: 'member' }
+          : { status: 'suspended' };
+        const { data: updated, error: updateError } = await db.from('users').update(next)
+          .eq('id', userId).select('id,role,status,domain_verified').single();
+        if (updateError || !updated) return wrap(json({ error: updateError?.message || 'member_update_failed', message: 'Perubahan member gagal disimpan.' }, 400), req);
+        await db.from('audit_logs').insert({
+          actor_id: a.access.user_id, actor_role: a.access.role, action_type: action,
+          resource_type: 'users', resource_id: userId, old_value: target, new_value: updated,
+          reason: typeof b.reason === 'string' ? b.reason : null
+        });
+        return wrap(json({ success: true, data: updated, message: action + ' success' }), req);
+      }
+
+      // CLAIM PAYOUT -> atomic claim approval + payout transaction + double-entry ledger.
+      if (action === 'APPROVE_CLAIM') {
+        if (!await can(a, 'payment.manage')) {
+          return wrap(json({ error: 'forbidden', message: 'Anda tidak memiliki izin memproses payout klaim.' }, 403), req);
+        }
+        const claimId = String(b.metadata?.claim_id || b.claim_id || '').trim();
+        if (!claimId) {
+          return wrap(json({ error: 'invalid_input', message: 'claim_id required.' }, 422), req);
+        }
         try {
-          const { data, error } = await db.from('payments')
-            .update({ status: toStatus, verified_at: new Date().toISOString(), verified_by: a.access.user_id })
-            .eq('id', paymentId)
-            .select('id,payment_number,user_id,amount,currency,status')
-            .single();
+          const { data, error } = await db.rpc('approve_claim_atomic', {
+            p_claim_id: claimId,
+            p_actor_id: a.access.user_id,
+            p_actor_role: a.access.role,
+            p_notes: typeof b.reason === 'string' ? b.reason.trim() : null
+          });
           if (error) throw error;
-          try {
-            const { data: chatRows } = await db.from('admin_chat_ids').select('chat_id').eq('is_active', true).limit(1);
-            const chatId = chatRows && chatRows[0]?.chat_id;
-            if (chatId && BOT_TOKEN) {
-              await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  chat_id: chatId,
-                  text: `${toStatus === 'verified' ? '✅' : '⛔'} [PAYROLL ${toStatus.toUpperCase()}] Pembayaran #${data.payment_number || paymentId} senilai ${data.currency} ${Number(data.amount || 0).toLocaleString('id-ID')} diverifikasi oleh operator #${a.access.user_id}.`,
-                  parse_mode: 'Markdown'
-                })
-              });
-            }
-          } catch (dispatchErr) {
-            console.warn('Payment notify dispatch warning:', dispatchErr);
-          }
-          return wrap(json({ success: true, data, message: `${action} success` }), req);
+          return wrap(json({ success: true, data, message: 'Klaim disetujui dan payout tercatat secara atomik.' }), req);
         } catch (err: any) {
-          return wrap(json({ error: err.message || 'payment_update_failed', message: err.message || 'Payment update failed.' }, 400), req);
+          return wrap(json({ error: err.message || 'claim_approval_failed', message: err.message || 'Approval klaim gagal.' }, 400), req);
+        }
+      }
+
+      // CLAIM REJECTION -> atomic status/audit/notification, with no payout transaction or ledger entry.
+      if (action === 'REJECT_CLAIM') {
+        if (!await can(a, 'payment.manage')) {
+          return wrap(json({ error: 'forbidden', message: 'Anda tidak memiliki izin menolak payout klaim.' }, 403), req);
+        }
+        const claimId = String(b.metadata?.claim_id || b.claim_id || '').trim();
+        const reason = typeof b.reason === 'string' ? b.reason.trim() : '';
+        if (!claimId || !reason) {
+          return wrap(json({ error: 'invalid_input', message: 'claim_id dan rejection reason wajib diisi.' }, 422), req);
+        }
+        try {
+          const { data, error } = await db.rpc('reject_claim_atomic', {
+            p_claim_id: claimId,
+            p_actor_id: a.access.user_id,
+            p_actor_role: a.access.role,
+            p_rejection_reason: reason
+          });
+          if (error) throw error;
+          return wrap(json({ success: true, data, message: 'Klaim ditolak secara atomik; tidak ada jurnal payout.' }), req);
+        } catch (err: any) {
+          return wrap(json({ error: err.message || 'claim_rejection_failed', message: err.message || 'Penolakan klaim gagal.' }, 400), req);
+        }
+      }
+
+      // CLAIM PAYOUT SETTLEMENT -> bank/provider confirmation is a separate phase.
+      // Approval never reduces the bank account and never reports a transfer as completed.
+      if (action === 'SETTLE_CLAIM') {
+        if (!await can(a, 'payment.manage')) {
+          return wrap(json({ error: 'forbidden', message: 'Anda tidak memiliki izin menyelesaikan payout klaim.' }, 403), req);
+        }
+        const claimId = String(b.metadata?.claim_id || b.claim_id || '').trim();
+        const providerReference = typeof b.metadata?.provider_reference === 'string'
+          ? b.metadata.provider_reference.trim()
+          : (typeof b.provider_reference === 'string' ? b.provider_reference.trim() : '');
+        if (!claimId || !providerReference) {
+          return wrap(json({ error: 'invalid_input', message: 'claim_id dan provider_reference wajib diisi.' }, 422), req);
+        }
+        try {
+          const { data, error } = await db.rpc('settle_claim_payout_atomic', {
+            p_claim_id: claimId,
+            p_actor_id: a.access.user_id,
+            p_actor_role: a.access.role,
+            p_provider_reference: providerReference,
+            p_notes: typeof b.reason === 'string' ? b.reason.trim() : null
+          });
+          if (error) throw error;
+          return wrap(json({ success: true, data, message: 'Payout ditandai settled berdasarkan referensi transfer.' }), req);
+        } catch (err: any) {
+          return wrap(json({ error: err.message || 'claim_settlement_failed', message: err.message || 'Settlement payout gagal.' }, 400), req);
+        }
+      }
+
+      // VERIFY_PAYMENT / REJECT_PAYMENT -> atomic database RPC.
+      // The RPC receives the authenticated Supabase UUID and resolves the
+      // canonical operator role + public.users identity internally.
+      if (action === 'VERIFY_PAYMENT' || action === 'REJECT_PAYMENT') {
+        if (!await can(a, 'payment.manage')) {
+          return wrap(json({
+            error: 'forbidden',
+            message: 'Anda tidak memiliki izin mengelola pembayaran.'
+          }, 403), req);
+        }
+
+        const paymentId = Number(b.payment_id || b.paymentId);
+        if (!Number.isInteger(paymentId) || paymentId <= 0) {
+          return wrap(json({
+            error: 'invalid_input',
+            message: 'payment_id required.'
+          }, 422), req);
+        }
+
+        const actorAuthUserId = a.authUser?.id;
+        if (!actorAuthUserId) {
+          return wrap(json({
+            error: 'unauthorized',
+            message: 'Authenticated actor ID tidak tersedia.'
+          }, 401), req);
+        }
+
+        try {
+          let rpcResponse;
+
+          if (action === 'VERIFY_PAYMENT') {
+            const { data, error } = await db.rpc('verify_payment_slip_atomic', {
+              p_payment_id: paymentId,
+              p_actor_auth_user_id: actorAuthUserId
+            });
+            if (error) throw error;
+            rpcResponse = data;
+          } else {
+            const reason = String(
+              b.reason || b.rejection_reason || b.verification_notes || ''
+            ).trim();
+
+            if (!reason) {
+              return wrap(json({
+                error: 'invalid_input',
+                message: 'Alasan penolakan (reason) wajib diisi.'
+              }, 422), req);
+            }
+
+            const { data, error } = await db.rpc('reject_payment_slip_atomic', {
+              p_payment_id: paymentId,
+              p_actor_auth_user_id: actorAuthUserId,
+              p_reason: reason
+            });
+            if (error) throw error;
+            rpcResponse = data;
+          }
+
+          return wrap(json({
+            success: true,
+            data: rpcResponse,
+            message: `${action} success`
+          }), req);
+        } catch (err: any) {
+          console.error(`[${action}] Error:`, err);
+          const message = err?.message || 'Gagal memproses pembayaran.';
+          const status = String(message).startsWith('UNAUTHORIZED_ACTOR:')
+            ? 403
+            : String(message).startsWith('FORBIDDEN_ROLE:')
+              ? 403
+              : String(message).startsWith('PAYMENT_NOT_FOUND:')
+                ? 404
+                : String(message).startsWith('INVALID_STATE:')
+                  ? 409
+                  : 400;
+
+          return wrap(json({
+            error: err?.code || 'payment_action_failed',
+            message
+          }, status), req);
         }
       }
 
@@ -936,85 +1106,176 @@ Deno.serve(async (req: Request) => {
 
       if (p === '/admin/users/create' && req.method === 'POST') {
         const body = await req.json();
-        const { email, password, role, fullName, telegramId } = body;
-        if (!email || !password || !fullName) {
-          return wrap(json({ error: 'invalid_input', message: 'Email, password, dan nama wajib diisi.' }, 422), req);
+        const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+        const password = typeof body.password === 'string' ? body.password : '';
+        const fullName = typeof body.fullName === 'string' ? body.fullName.trim() : '';
+        const role = body.role === 'dev' || body.role === 'admin' ? body.role : null;
+        const telegramId = body.telegramId == null || body.telegramId === '' ? null : Number(body.telegramId);
+
+        if (!email || !password || !fullName || !role || password.length < 8 || (telegramId !== null && !Number.isSafeInteger(telegramId))) {
+          return wrap(json({ error: 'invalid_input', message: 'Email, nama, role (admin/dev), password minimal 8 karakter, dan Telegram ID valid wajib diisi.' }, 422), req);
+        }
+
+        const { data: existing } = await db.from('admin_accounts')
+          .select('id')
+          .eq('email', email)
+          .maybeSingle();
+        if (existing) {
+          return wrap(json({ error: 'conflict', message: 'Email admin sudah terdaftar.' }, 409), req);
         }
 
         const { data: authData, error: authError } = await db.auth.admin.createUser({
-          email: email.trim().toLowerCase(),
+          email,
           password,
           email_confirm: true,
-          user_metadata: { full_name: fullName, role: role || 'admin', telegram_id: telegramId }
+          user_metadata: { full_name: fullName, role, telegram_id: telegramId }
         });
 
-        if (authError) {
-          return wrap(json({ error: authError.message }, 400), req);
+        if (authError || !authData?.user?.id) {
+          return wrap(json({ error: authError?.message || 'Gagal membuat user Auth.' }, 400), req);
         }
 
-        const { error: dbError } = await db.from('admin_accounts').insert({
+        const { data: account, error: dbError } = await db.from('admin_accounts').insert({
           auth_user_id: authData.user.id,
-          email: email.trim().toLowerCase(),
-          role: role || 'admin',
-          telegram_id: telegramId ? Number(telegramId) : null,
+          email,
+          role,
+          telegram_id: telegramId,
           full_name: fullName,
           is_active: true
-        });
+        }).select('id,email,role,telegram_id,full_name,is_active,created_at').single();
 
-        if (dbError) {
-          return wrap(json({ error: dbError.message }, 400), req);
+        // Compensating action: never leave an orphan auth.users account if the
+        // canonical admin_accounts row cannot be created.
+        if (dbError || !account) {
+          await db.auth.admin.deleteUser(authData.user.id).catch(() => {});
+          return wrap(json({ error: dbError?.message || 'Gagal membuat record admin.' }, 400), req);
         }
 
-        return wrap(json({ success: true, user: authData.user }), req);
+        return wrap(json({ success: true, account }), req);
       }
 
       if (p === '/admin/users/update' && req.method === 'PUT') {
         const body = await req.json();
-        const { adminId, updates } = body;
-        if (!adminId || !updates) {
-          return wrap(json({ error: 'invalid_input', message: 'ID akun dan data perubahan wajib diisi.' }, 422), req);
+        const adminId = typeof body.adminId === 'string' ? body.adminId : '';
+        const input = body.updates && typeof body.updates === 'object' ? body.updates : {};
+        if (!adminId || !Object.keys(input).length) {
+          return wrap(json({ error: 'invalid_input', message: 'ID akun dan perubahan wajib diisi.' }, 422), req);
+        }
+
+        // Never spread client-controlled fields into admin_accounts.
+        const updates: Record<string, any> = {};
+        if (typeof input.email === 'string' && input.email.trim()) updates.email = input.email.trim().toLowerCase();
+        if (typeof input.full_name === 'string' && input.full_name.trim()) updates.full_name = input.full_name.trim();
+        if (input.telegram_id === null || (Number.isSafeInteger(Number(input.telegram_id)) && Number(input.telegram_id) > 0)) {
+          updates.telegram_id = input.telegram_id === null ? null : Number(input.telegram_id);
+        }
+        if (input.role !== undefined) {
+          if (input.role !== 'admin' && input.role !== 'dev') {
+            return wrap(json({ error: 'invalid_input', message: 'Role target hanya admin atau dev.' }, 422), req);
+          }
+          updates.role = input.role;
+        }
+        if (input.is_active !== undefined) {
+          if (typeof input.is_active !== 'boolean') {
+            return wrap(json({ error: 'invalid_input', message: 'is_active harus boolean.' }, 422), req);
+          }
+          updates.is_active = input.is_active;
+        }
+        if (!Object.keys(updates).length) {
+          return wrap(json({ error: 'invalid_input', message: 'Tidak ada field yang dapat diubah.' }, 422), req);
+        }
+
+        const { data: target, error: targetError } = await db.from('admin_accounts')
+          .select('id,auth_user_id,role,is_active')
+          .eq('id', adminId)
+          .maybeSingle();
+        if (targetError || !target) {
+          return wrap(json({ error: 'not_found', message: 'Akun admin tidak ditemukan.' }, 404), req);
+        }
+        if (target.role === 'super_admin' || target.role === 'root') {
+          return wrap(json({ error: 'forbidden', message: 'Akun Super Admin tidak boleh diubah melalui operator account CRUD.' }, 403), req);
+        }
+        if (target.auth_user_id === a.authUser.id && updates.is_active === false) {
+          return wrap(json({ error: 'invalid_action', message: 'Tidak boleh menonaktifkan sesi sendiri.' }, 409), req);
         }
 
         const { error } = await db.from('admin_accounts')
           .update({ ...updates, updated_at: new Date().toISOString() })
           .eq('id', adminId);
+        if (error) return wrap(json({ error: error.message }, 400), req);
 
-        if (error) {
-          return wrap(json({ error: error.message }, 400), req);
+        // Keep Auth metadata aligned with the canonical admin_accounts identity.
+        if (target.auth_user_id) {
+          const metadataPatch: Record<string, any> = {};
+          if (updates.full_name !== undefined) metadataPatch.full_name = updates.full_name;
+          if (updates.role !== undefined) metadataPatch.role = updates.role;
+          if (updates.telegram_id !== undefined) metadataPatch.telegram_id = updates.telegram_id;
+          if (Object.keys(metadataPatch).length) {
+            const { error: metaError } = await db.auth.admin.updateUserById(target.auth_user_id, { user_metadata: metadataPatch });
+            if (metaError) {
+              return wrap(json({ error: 'Auth metadata update failed: ' + metaError.message }, 500), req);
+            }
+          }
         }
         return wrap(json({ success: true }), req);
       }
 
       if (p === '/admin/users/reset-password' && req.method === 'POST') {
         const body = await req.json();
-        const { adminId, newPassword } = body;
-        if (!adminId || !newPassword) {
-          return wrap(json({ error: 'invalid_input', message: 'ID admin dan password baru wajib diisi.' }, 422), req);
+        const adminId = typeof body.adminId === 'string' ? body.adminId : '';
+        const newPassword = typeof body.newPassword === 'string' ? body.newPassword : '';
+        if (!adminId || newPassword.length < 8) {
+          return wrap(json({ error: 'invalid_input', message: 'ID admin wajib diisi dan password minimal 8 karakter.' }, 422), req);
         }
 
-        const { data: acc } = await db.from('admin_accounts').select('auth_user_id').eq('id', adminId).maybeSingle();
-        const targetAuthUid = acc?.auth_user_id || adminId;
-
-        const { error } = await db.auth.admin.updateUserById(targetAuthUid, { password: newPassword });
-        if (error) {
-          return wrap(json({ error: error.message }, 400), req);
+        const { data: acc } = await db.from('admin_accounts')
+          .select('auth_user_id,role,is_active')
+          .eq('id', adminId)
+          .maybeSingle();
+        if (!acc?.auth_user_id) {
+          return wrap(json({ error: 'not_found', message: 'Akun admin tidak ditemukan.' }, 404), req);
         }
+        if (acc.role === 'super_admin' || acc.role === 'root') {
+          return wrap(json({ error: 'forbidden', message: 'Password Super Admin tidak diubah melalui endpoint operator CRUD.' }, 403), req);
+        }
+
+        const { error } = await db.auth.admin.updateUserById(acc.auth_user_id, { password: newPassword });
+        if (error) return wrap(json({ error: error.message }, 400), req);
         return wrap(json({ success: true }), req);
       }
 
       if (p === '/admin/users/delete' && req.method === 'DELETE') {
         const body = await req.json();
-        const { adminId } = body;
+        const adminId = typeof body.adminId === 'string' ? body.adminId : '';
         if (!adminId) {
           return wrap(json({ error: 'invalid_input', message: 'ID admin wajib diisi.' }, 422), req);
         }
 
-        const { data: acc } = await db.from('admin_accounts').select('auth_user_id').eq('id', adminId).maybeSingle();
-        const targetAuthUid = acc?.auth_user_id || adminId;
+        const { data: acc } = await db.from('admin_accounts')
+          .select('auth_user_id,role,is_active')
+          .eq('id', adminId)
+          .maybeSingle();
+        if (!acc?.auth_user_id) {
+          return wrap(json({ error: 'not_found', message: 'Akun admin tidak ditemukan.' }, 404), req);
+        }
+        if (acc.role === 'super_admin' || acc.role === 'root' || acc.auth_user_id === a.authUser.id) {
+          return wrap(json({ error: 'forbidden', message: 'Akun Super Admin/root atau sesi sendiri tidak boleh dihapus.' }, 403), req);
+        }
 
-        await db.from('admin_accounts').delete().eq('id', adminId);
-        await db.from('dashboard_access').delete().eq('auth_user_id', targetAuthUid);
-        await db.auth.admin.deleteUser(targetAuthUid).catch(() => {});
+        const { error: dbError } = await db.from('admin_accounts').delete().eq('id', adminId);
+        if (dbError) return wrap(json({ error: dbError.message }, 400), req);
+
+        const { error: accessError } = await db.from('dashboard_access').delete().eq('auth_user_id', acc.auth_user_id);
+        if (accessError) {
+          return wrap(json({ error: accessError.message }, 500), req);
+        }
+
+        const { error: authError } = await db.auth.admin.deleteUser(acc.auth_user_id);
+        if (authError) {
+          // Do not report success if Auth deletion failed. The DB row is already
+          // removed, so an operator can safely retry reconciliation.
+          return wrap(json({ error: authError.message, code: 'auth_delete_failed' }, 502), req);
+        }
 
         return wrap(json({ success: true }), req);
       }

@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, supabaseAnonKey, supabaseUrl } from './supabase';
 
 // ==========================================
 // ADMIN ACCOUNT MANAGEMENT (Super Admin only)
@@ -15,63 +15,94 @@ export interface AdminAccount {
   is_active: boolean;
 }
 
-// Create new admin account (Super Admin only)
-//
-// SECURITY BOUNDARY: creating, updating, or deleting Supabase Auth users
-// requires the service_role key. Browsers only have the anon key, so these
-// operations must be performed by a server-side Edge Function. These helpers
-// fail closed with an explicit server-required error instead of calling the
-// unavailable admin API (and they never confuse admin_accounts.id with
-// auth.users.id).
-export async function createAdminAccount(
-  _creatorTelegramId: number,
-  _email: string,
-  _password: string,
-  _role: 'dev' | 'admin',
-  _fullName: string,
-  _telegramId?: number
-): Promise<{ success: boolean; error?: string }> {
-  return {
-    success: false,
-    error: 'Operasi ini hanya tersedia melalui server Edge Function (service_role).',
-  };
+// Server-side admin account management.
+// The browser never receives service_role. All privileged mutations go through
+// backoffice-api-v3 with the real Supabase Auth access token.
+async function adminApi<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error('Sesi login tidak valid.');
+
+  const base = (
+    import.meta.env.VITE_BACKOFFICE_API_URL ||
+    `${import.meta.env.VITE_SUPABASE_URL || 'https://pnvnpencatzspkwxspac.supabase.co'}/functions/v1/backoffice-api-v3`
+  ).replace(/\/$/, '');
+
+  const response = await fetch(`${base}${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      ...(init.headers || {}),
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body?.message || body?.error || `Request gagal (${response.status})`);
+  return body as T;
 }
 
-// Update admin account (Super Admin only)
+export async function createAdminAccount(
+  _creatorTelegramId: number,
+  email: string,
+  password: string,
+  role: 'dev' | 'admin',
+  fullName: string,
+  telegramId?: number
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await adminApi('/admin/users/create', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, role, fullName, telegramId }),
+    });
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e?.message || 'Gagal membuat akun admin.' };
+  }
+}
+
 export async function updateAdminAccount(
   adminId: string,
   updates: { email?: string; role?: string; full_name?: string; telegram_id?: number; is_active?: boolean }
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { error } = await supabase.from('admin_accounts').update({ ...updates, updated_at: new Date().toISOString() }).eq('id', adminId);
-    if (error) return { success: false, error: error.message };
+    await adminApi('/admin/users/update', {
+      method: 'PUT',
+      body: JSON.stringify({ adminId, updates }),
+    });
     return { success: true };
   } catch (e: any) {
-    return { success: false, error: e.message };
+    return { success: false, error: e?.message || 'Gagal memperbarui akun admin.' };
   }
 }
 
-// Reset admin password (Super Admin only)
-//
-// Server-only: resetting another user's Auth password requires service_role.
-// The browser helper fails closed so the UI cannot imply success. It also
-// accepts only the Auth user id (never admin_accounts.id) to avoid id mixing.
-export async function resetAdminPassword(_authUserId: string, _newPassword: string): Promise<{ success: boolean; error?: string }> {
-  return {
-    success: false,
-    error: 'Reset password admin hanya tersedia melalui server Edge Function (service_role).',
-  };
+export async function resetAdminPassword(
+  adminId: string,
+  newPassword: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await adminApi('/admin/users/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ adminId, newPassword }),
+    });
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e?.message || 'Gagal mereset password admin.' };
+  }
 }
 
-// Delete admin account (Super Admin only)
-//
-// Server-only for the same reason. Accepts only the Auth user id; deleting
-// the admin_accounts row must happen server-side in one transaction.
-export async function deleteAdminAccount(_authUserId: string): Promise<{ success: boolean; error?: string }> {
-  return {
-    success: false,
-    error: 'Hapus akun admin hanya tersedia melalui server Edge Function (service_role).',
-  };
+export async function deleteAdminAccount(
+  adminId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await adminApi('/admin/users/delete', {
+      method: 'DELETE',
+      body: JSON.stringify({ adminId }),
+    });
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e?.message || 'Gagal menghapus akun admin.' };
+  }
 }
 
 // Get all admin accounts (Super Admin only)
@@ -114,17 +145,72 @@ export async function loginAdminWithEmail(
   email: string,
   password: string
 ): Promise<{ success: boolean; user?: any; session?: any; access_token?: string; role?: string; error?: string }> {
-  const base = await loginWithEmail(email, password);
-  if (!base.success) return base;
+  const cleanEmail = email.trim().toLowerCase();
 
-    const { access, role } = await checkUserAdminAccess(base.user.id);
-    if (!access) {
-      await supabase.auth.signOut();
-      return { success: false, error: 'Akses ditolak. Hubungi Super Admin.' };
+  // Prefer the canonical backoffice-api-v3 login path. This avoids making the
+  // browser depend on a direct PostgREST/Auth network path for the initial
+  // credential exchange, while the Edge Function still authenticates against
+  // the same Supabase Auth tenant.
+  try {
+    const apiBase = (import.meta.env.VITE_BACKOFFICE_API_URL || `${supabaseUrl}/functions/v1/backoffice-api-v3`).replace(/\/$/, '');
+    const response = await fetch(`${apiBase}/login`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'apikey': supabaseAnonKey,
+        'authorization': `Bearer ${supabaseAnonKey}`,
+      },
+      body: JSON.stringify({ email: cleanEmail, password }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (response.ok && payload?.access_token && payload?.refresh_token) {
+      const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+        access_token: payload.access_token,
+        refresh_token: payload.refresh_token,
+      });
+      if (!sessionError && sessionData?.user && sessionData?.session) {
+        return {
+          success: true,
+          user: sessionData.user,
+          session: sessionData.session,
+          access_token: sessionData.session.access_token,
+          role: payload.user?.role || payload.role,
+        };
+      }
     }
 
-    await supabase.from('admin_accounts').update({ last_login: new Date().toISOString() }).eq('auth_user_id', base.user.id);
-    return { ...base, role };
+    // Preserve a useful backend rejection instead of converting it into a
+    // misleading generic "Failed to fetch" message.
+    if (response.status === 401 || response.status === 403) {
+      return {
+        success: false,
+        error: payload?.message || (response.status === 401
+          ? 'Email atau password tidak valid.'
+          : 'Akun tidak memiliki akses ke Backoffice.'),
+      };
+    }
+  } catch (apiError) {
+    console.warn('Backoffice /login unavailable; trying direct Supabase Auth:', apiError);
+  }
+
+  // Fallback for environments where the Edge Function is temporarily unavailable.
+  const base = await loginWithEmail(cleanEmail, password);
+  if (!base.success) {
+    const raw = base.error || 'Login gagal.';
+    const friendly = /failed to fetch|networkerror|load failed/i.test(raw)
+      ? 'Tidak dapat terhubung ke server autentikasi. Periksa koneksi, URL Supabase, atau deployment environment.'
+      : raw;
+    return { success: false, error: friendly };
+  }
+
+  const { access, role } = await checkUserAdminAccess(base.user.id);
+  if (!access) {
+    await supabase.auth.signOut();
+    return { success: false, error: 'Akses ditolak. Hubungi Super Admin.' };
+  }
+
+  return { ...base, role };
 }
 
 // Member email login: Supabase Auth + verify_member_access (RPC, fail-closed)
@@ -228,6 +314,107 @@ export async function verifyTelegramWidgetPayload(payload: any): Promise<{ succe
     return { success: true, user: result.user, role: result.role, token_hash: result.token_hash, email: result.email };
   } catch (e: any) {
     return { success: false, error: e.message };
+  }
+}
+
+// ==========================================
+ // TELEGRAM OPERATOR PROOF-OF-POSSESSION BINDING
+ // ==========================================
+
+function telegramAuthFunctionUrl(path: string = ''): string {
+  const base = (
+    import.meta.env.VITE_SUPABASE_URL ||
+    'https://pnvnpencatzspkwxspac.supabase.co'
+  ).replace(/\/$/, '');
+  return `${base}/functions/v1/telegram-auth${path}`;
+}
+
+async function telegramBindingRequest<T>(path: string, body: Record<string, any>): Promise<T> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Sesi login tidak valid.');
+
+  const response = await fetch(telegramAuthFunctionUrl(path), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: supabaseAnonKey,
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result?.error || `Binding request gagal (${response.status})`);
+  return result as T;
+}
+
+export function getTelegramWebAppInitData(): string | null {
+  if (typeof window === 'undefined') return null;
+  return (window as any).Telegram?.WebApp?.initData || null;
+}
+
+/**
+ * Validate raw Telegram Mini App initData.
+ * This is deliberately separate from the legacy Login Widget HMAC contract.
+ */
+export async function verifyTelegramMiniAppInitData(
+  initData: string
+): Promise<{ valid: boolean; user?: any; tg_data?: any; error?: string }> {
+  const clean = String(initData || '').trim();
+  if (!clean) return { valid: false, error: 'Telegram WebApp initData tidak tersedia.' };
+
+  try {
+    const response = await fetch(telegramAuthFunctionUrl('/verify-init-data'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${supabaseAnonKey}`,
+      },
+      body: JSON.stringify({ initData: clean, action: 'verify-init-data' }),
+    });
+
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result?.valid) {
+      return {
+        valid: false,
+        error: result?.error || `Verifikasi Mini App gagal (${response.status})`,
+      };
+    }
+
+    return {
+      valid: true,
+      user: result.user,
+      tg_data: result.tg_data,
+    };
+  } catch (e: any) {
+    return { valid: false, error: e?.message || 'Gagal memverifikasi Telegram Mini App.' };
+  }
+}
+
+export async function bindCurrentAdminToTelegramInitData(): Promise<{ bound: boolean; binding?: any; telegram?: any; error?: string }> {
+  try {
+    const initData = getTelegramWebAppInitData();
+    if (!initData) return { bound: false, error: 'Telegram WebApp initData tidak tersedia. Buka Dashboard dari Telegram.' };
+    return await telegramBindingRequest('/bind', { initData });
+  } catch (e: any) {
+    return { bound: false, error: e?.message || 'Binding Telegram gagal.' };
+  }
+}
+
+export async function getTelegramBindingStatus(): Promise<{ bound: boolean; auth_user_id?: string; role?: string; canonical_user_id?: number | null; telegram_id?: number | null; email?: string | null; error?: string }> {
+  try {
+    return await telegramBindingRequest('/binding-status', {});
+  } catch (e: any) {
+    return { bound: false, error: e?.message || 'Gagal membaca status binding Telegram.' };
+  }
+}
+
+export async function createTelegramBindChallenge(): Promise<{ created: boolean; deep_link?: string; expires_at?: string; challenge_id?: string; error?: string }> {
+  try {
+    return await telegramBindingRequest('/bind/challenge', {});
+  } catch (e: any) {
+    return { created: false, error: e?.message || 'Gagal membuat challenge Telegram.' };
   }
 }
 

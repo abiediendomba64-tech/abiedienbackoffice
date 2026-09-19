@@ -1,0 +1,41 @@
+name: Typecheck and build
+
+on:
+  push:
+    branches:
+      - fix/function-integrity-20260918
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  remote-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Telegram auth remote integrity
+        run: node scripts/remote-function-integrity.mjs
+        env:
+          SUPABASE_PROJECT_REF: pnvnpencatzspkwxspac
+      - name: Backoffice API v3 remote integrity
+        run: node scripts/remote-backoffice-v3-integrity.mjs
+        env:
+          SUPABASE_PROJECT_REF: pnvnpencatzspkwxspac
