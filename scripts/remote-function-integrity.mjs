@@ -16,15 +16,42 @@ function assert(condition, message) {
 }
 
 async function request(url, options = {}) {
-  const response = await fetch(url, options);
-  const text = await response.text();
-  let json = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    // Keep raw response for diagnostics.
+  const attempts = 3;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8_000);
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeout);
+
+      const text = await response.text();
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        // Keep raw response for diagnostics.
+      }
+
+      if (response.status >= 500 && attempt < attempts) {
+        await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+        continue;
+      }
+
+      return { response, text, json };
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+        continue;
+      }
+    }
   }
-  return { response, text, json };
+
+  throw new Error(
+    `Remote request failed after ${attempts} attempts: ${lastError?.message || String(lastError)}`
+  );
 }
 
 function requireCors(response, expectedOrigin) {
