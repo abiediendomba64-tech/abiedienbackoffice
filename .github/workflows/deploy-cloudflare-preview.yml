@@ -4,6 +4,9 @@
 name: Deploy Cloudflare Preview
 
 on:
+  push:
+    branches:
+      - fix/function-integrity-20260918
   pull_request:
     branches:
       - main
