@@ -24,6 +24,7 @@ import {
   verifyWhatsAppOtp,
   verifyAdminAccess,
   verifyTelegramWidgetPayload,
+  verifyTelegramMiniAppInitData,
   signOut
 } from '../lib/auth';
 import { supabase } from '../lib/supabase';
@@ -163,16 +164,14 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateToM
     // Auto-detect Telegram WebApp environment
     const tgWebApp = (window as any).Telegram?.WebApp;
     if (tgWebApp?.initData) {
-      const initData = tgWebApp.initData;
-      const params = new URLSearchParams(initData);
-      const hash = params.get('hash');
-      const userStr = params.get('user');
-      if (hash && userStr) {
-        try {
-          const userObj = JSON.parse(userStr);
-          (window as any).onTelegramAuth?.({ ...userObj, hash, auth_date: params.get('auth_date') });
-        } catch {}
-      }
+      void verifyTelegramMiniAppInitData(tgWebApp.initData).then((verified) => {
+        if (!isMounted) return;
+        if (verified.valid) {
+          setInfoMessage('Telegram Mini App terdeteksi. Login Super Admin tetap menggunakan Email + Password; setelah masuk, lakukan Gate 2 binding Telegram.');
+        } else if (verified.error) {
+          console.warn('Telegram Mini App verification note:', verified.error);
+        }
+      });
     }
 
     return () => {
