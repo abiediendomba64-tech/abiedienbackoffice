@@ -353,6 +353,45 @@ export function getTelegramWebAppInitData(): string | null {
   return (window as any).Telegram?.WebApp?.initData || null;
 }
 
+/**
+ * Validate raw Telegram Mini App initData.
+ * This is deliberately separate from the legacy Login Widget HMAC contract.
+ */
+export async function verifyTelegramMiniAppInitData(
+  initData: string
+): Promise<{ valid: boolean; user?: any; tg_data?: any; error?: string }> {
+  const clean = String(initData || '').trim();
+  if (!clean) return { valid: false, error: 'Telegram WebApp initData tidak tersedia.' };
+
+  try {
+    const response = await fetch(telegramAuthFunctionUrl('/verify-init-data'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${supabaseAnonKey}`,
+      },
+      body: JSON.stringify({ initData: clean, action: 'verify-init-data' }),
+    });
+
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result?.valid) {
+      return {
+        valid: false,
+        error: result?.error || `Verifikasi Mini App gagal (${response.status})`,
+      };
+    }
+
+    return {
+      valid: true,
+      user: result.user,
+      tg_data: result.tg_data,
+    };
+  } catch (e: any) {
+    return { valid: false, error: e?.message || 'Gagal memverifikasi Telegram Mini App.' };
+  }
+}
+
 export async function bindCurrentAdminToTelegramInitData(): Promise<{ bound: boolean; binding?: any; telegram?: any; error?: string }> {
   try {
     const initData = getTelegramWebAppInitData();
