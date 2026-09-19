@@ -7,9 +7,6 @@ declare const Deno: any;
 
 /** Alias helpers used throughout this function. */
 const getCorsHeaders = (req?: Request) => buildCorsHeaders(req ?? null);
-// Fallback for legacy call-sites that spread corsHeaders without a request reference.
-// No Origin in those contexts means no Access-Control-Allow-Origin — correct behaviour.
-const corsHeaders = buildCorsHeaders(null);
 
 // Telegram Endpoints
 interface ClaimRow {
@@ -614,14 +611,14 @@ Deno.serve(async (req: Request) => {
       const authUser = await getBearerUser(req);
       if (!authUser) {
         return new Response(JSON.stringify({ bound: false, error: 'Authenticated web session required' }), {
-          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 401, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
       const admin = await getActiveAdminForAuth(authUser.id);
       if (!admin) {
         return new Response(JSON.stringify({ bound: false, error: 'Active admin account not found' }), {
-          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 403, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -635,7 +632,7 @@ Deno.serve(async (req: Request) => {
 
       if (dashboardError) {
         return new Response(JSON.stringify({ bound: false, error: dashboardError.message }), {
-          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 500, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -647,7 +644,7 @@ Deno.serve(async (req: Request) => {
 
       if (userError) {
         return new Response(JSON.stringify({ bound: false, error: userError.message }), {
-          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 500, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -662,28 +659,28 @@ Deno.serve(async (req: Request) => {
         role: admin.role,
         canonical_user_id: canonicalUserId,
         telegram_id: telegramId,
-      }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }), { status: 200, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } });
     }
 
     if (req.method === 'POST' && (pathname === '/bind' || body.action === 'bind-init-data')) {
       const authUser = await getBearerUser(req);
       if (!authUser) {
         return new Response(JSON.stringify({ bound: false, error: 'Authenticated web session required' }), {
-          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 401, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
       const admin = await getActiveAdminForAuth(authUser.id);
       if (!admin) {
         return new Response(JSON.stringify({ bound: false, error: 'Active admin account not found' }), {
-          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 403, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
       const rawInitData = body.initData;
       if (!rawInitData || typeof rawInitData !== 'string') {
         return new Response(JSON.stringify({ bound: false, error: 'Missing Telegram WebApp initData' }), {
-          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 400, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -691,7 +688,7 @@ Deno.serve(async (req: Request) => {
       const tgUserId = data.user?.id;
       if (!valid || !tgUserId) {
         return new Response(JSON.stringify({ bound: false, error: 'Invalid or expired Telegram initData' }), {
-          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 401, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -716,10 +713,10 @@ Deno.serve(async (req: Request) => {
             username: data.user?.username || null,
             first_name: data.user?.first_name || null,
           },
-        }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }), { status: 200, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } });
       } catch (e: any) {
         return new Response(JSON.stringify({ bound: false, error: e?.message || 'Identity binding failed' }), {
-          status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 409, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
     }
@@ -728,14 +725,14 @@ Deno.serve(async (req: Request) => {
       const authUser = await getBearerUser(req);
       if (!authUser) {
         return new Response(JSON.stringify({ created: false, error: 'Authenticated web session required' }), {
-          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 401, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
       const admin = await getActiveAdminForAuth(authUser.id);
       if (!admin) {
         return new Response(JSON.stringify({ created: false, error: 'Active admin account not found' }), {
-          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 403, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -750,7 +747,7 @@ Deno.serve(async (req: Request) => {
 
       if (challengeError) {
         return new Response(JSON.stringify({ created: false, error: challengeError.message }), {
-          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 500, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -759,7 +756,7 @@ Deno.serve(async (req: Request) => {
       const botUsername = meJson?.result?.username;
       if (!botUsername) {
         return new Response(JSON.stringify({ created: false, error: 'Telegram bot username unavailable' }), {
-          status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 502, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -768,7 +765,7 @@ Deno.serve(async (req: Request) => {
         expires_at: expiresAt,
         challenge_id: challengeId,
         deep_link: `https://t.me/${botUsername}?start=bind_${token}`,
-      }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }), { status: 200, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } });
     }
 
     // ==========================================
@@ -778,21 +775,21 @@ Deno.serve(async (req: Request) => {
       const rawInitData = body.initData;
       if (!rawInitData || typeof rawInitData !== 'string') {
         return new Response(JSON.stringify({ valid: false, error: 'Missing initData' }), {
-          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 400, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
       const { valid, data } = await verifyTelegramInitData(rawInitData, botToken);
       if (!valid) {
         return new Response(JSON.stringify({ valid: false, error: 'Invalid or expired initData' }), {
-          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 401, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
       const tgUserId = data.user?.id;
       if (!tgUserId) {
         return new Response(JSON.stringify({ valid: false, error: 'No user in initData' }), {
-          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 400, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -806,7 +803,7 @@ Deno.serve(async (req: Request) => {
         valid: true,
         user: tgUser || { telegram_user_id: tgUserId, role: 'guest', status: 'not_registered' },
         tg_data: { id: tgUserId, username: data.user?.username, first_name: data.user?.first_name },
-      }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }), { status: 200, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } });
     }
 
     // ==========================================
@@ -817,7 +814,7 @@ Deno.serve(async (req: Request) => {
       const isValid = await verifyTelegramHMAC(payload, botToken);
       if (!isValid) {
         return new Response(JSON.stringify({ success: false, error: 'Validasi signature Telegram gagal atau expired' }), {
-          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 401, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -863,7 +860,7 @@ Deno.serve(async (req: Request) => {
         telegram_id: tgUserId,
         email: targetEmail,
         token_hash: tokenHash,
-      }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }), { status: 200, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } });
     }
 
     // ==========================================
@@ -875,7 +872,7 @@ Deno.serve(async (req: Request) => {
       if (!healthSecret || !constantTimeEqual(providedHealthSecret, healthSecret)) {
         return new Response(JSON.stringify({ error: 'Unauthorized health check' }), {
           status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
       // Accept both service_role (for admin calls) and authenticated sessions
@@ -884,7 +881,7 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({
         telegram_webhook: webhookInfo.result || webhookInfo,
         checked_at: new Date().toISOString(),
-      }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }), { status: 200, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } });
     }
 
     // ==========================================
@@ -895,7 +892,7 @@ Deno.serve(async (req: Request) => {
       if (incomingSecretToken !== webhookSecret) {
         return new Response(JSON.stringify({ error: 'Unauthorized webhook secret' }), {
           status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -911,7 +908,7 @@ Deno.serve(async (req: Request) => {
       if (existingUpdate) {
         return new Response(JSON.stringify({ status: 'already_processed' }), {
           status: 200,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -971,7 +968,7 @@ Deno.serve(async (req: Request) => {
 
         return new Response(JSON.stringify({ status: 'inline_query_answered' }), {
           status: 200,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -983,7 +980,7 @@ Deno.serve(async (req: Request) => {
         console.log(`Bot status in ${chatTitle} (${mcm.chat?.id}) changed to: ${newStatus}`);
         return new Response(JSON.stringify({ status: 'chat_member_updated' }), {
           status: 200,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -995,7 +992,7 @@ Deno.serve(async (req: Request) => {
       if (!sender || !chatId) {
         return new Response(JSON.stringify({ status: 'no_sender' }), {
           status: 200,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -1017,7 +1014,7 @@ Deno.serve(async (req: Request) => {
 
         if (!challenge) {
           await sendTelegramMessage(botToken, chatId, '⛔ *Binding Ditolak:* tautan tidak valid, kedaluwarsa, atau sudah digunakan.');
-          return new Response(JSON.stringify({ status: 'bind_invalid' }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+          return new Response(JSON.stringify({ status: 'bind_invalid' }), { status: 200, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } });
         }
 
         try {
@@ -1041,7 +1038,7 @@ Deno.serve(async (req: Request) => {
             `⛔ *Binding Ditolak:* ${e?.message || 'identity_binding_failed'}`
           );
         }
-        return new Response(JSON.stringify({ status: 'bind_handled' }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ status: 'bind_handled' }), { status: 200, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } });
       }
 
       // Automatically register / update admin_chat_ids and telegram_users for Super Admins
@@ -1188,7 +1185,7 @@ Deno.serve(async (req: Request) => {
 
         return new Response(JSON.stringify({ status: 'callback_handled' }), {
           status: 200,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -1202,7 +1199,7 @@ Deno.serve(async (req: Request) => {
           });
           return new Response(JSON.stringify({ status: 'claim_rejected_not_member' }), {
             status: 200,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
           });
         }
 
@@ -1216,7 +1213,7 @@ Deno.serve(async (req: Request) => {
           await sendTelegramMessage(botToken, chatId, `⚠️ *Pengajuan Klaim Ditolak:*\n${rateLimitCheck.reason}`);
           return new Response(JSON.stringify({ status: 'rate_limited' }), {
             status: 200,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
           });
         }
 
@@ -1226,7 +1223,7 @@ Deno.serve(async (req: Request) => {
           await sendTelegramMessage(botToken, chatId, '⚠️ Ukuran foto melebihi batas 5 MB. Silakan kompres atau kirim foto dengan resolusi lebih ringkas.');
           return new Response(JSON.stringify({ status: 'file_too_large' }), {
             status: 200,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
           });
         }
 
@@ -1238,7 +1235,7 @@ Deno.serve(async (req: Request) => {
           await sendTelegramMessage(botToken, chatId, '❌ Gagal mengunduh berkas dari Telegram. Silakan coba kirim ulang.');
           return new Response(JSON.stringify({ status: 'download_failed' }), {
             status: 200,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
           });
         }
 
@@ -1298,7 +1295,7 @@ Deno.serve(async (req: Request) => {
 
         return new Response(JSON.stringify({ status: 'photo_processed' }), {
           status: 200,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -2397,13 +2394,13 @@ Deno.serve(async (req: Request) => {
     // OIDC and Widget flows are deprecated. All auth happens via the /login webhook command above.
     return new Response(JSON.stringify({ error: 'Endpoint not supported. Use Telegram Bot /login command.' }), {
       status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' },
     });
 
   } catch (error: any) {
     return new Response(JSON.stringify({ error: error.message }), {
       status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' },
     });
   }
 });
