@@ -31,6 +31,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node scripts/remote-function-integrity.mjs
+      - name: Telegram auth remote integrity
+        run: node scripts/remote-function-integrity.mjs
+        env:
+          SUPABASE_PROJECT_REF: pnvnpencatzspkwxspac
+      - name: Backoffice API v3 remote integrity
+        run: node scripts/remote-backoffice-v3-integrity.mjs
         env:
           SUPABASE_PROJECT_REF: pnvnpencatzspkwxspac
