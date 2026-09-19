@@ -26,6 +26,7 @@ import {
   verifyWhatsAppOtp,
   verifyMemberAccess,
   verifyTelegramWidgetPayload,
+  verifyTelegramMiniAppInitData,
   registerMember,
   signOut
 } from '../lib/auth';
@@ -67,6 +68,8 @@ export const MemberLogin: React.FC<MemberLoginProps> = ({ onSuccess, onNavigateT
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    let isMounted = true;
+
     (window as any).onTelegramAuth = async (tgPayload: any) => {
       setLoading(true);
       setErrorMessage(null);
